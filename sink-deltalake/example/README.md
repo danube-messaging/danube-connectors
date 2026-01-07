@@ -6,9 +6,17 @@ Complete working example demonstrating the Delta Lake Sink Connector for streami
 
 This example shows how to:
 1. Run Danube broker, MinIO (S3-compatible storage), and the connector with Docker Compose
-2. Generate sample events and send them to Danube
-3. Automatically stream events to Delta Lake tables
-4. Query and analyze the data using Python or Spark
+2. Register JSON schemas with Danube Schema Registry
+3. Create topics with schema validation enabled
+4. Generate and validate sample events using danube-cli
+5. Automatically stream events to Delta Lake tables with type safety
+6. Query and analyze the data using Python or Spark
+
+**Key Features:**
+- **Schema Validation**: JSON Schema validation for all messages
+- **Type Safety**: Runtime validates and deserializes payloads
+- **Nested Fields**: Extract values from complex JSON structures
+- **Performance**: Pre-split JSON paths for efficient extraction
 
 ## Architecture
 
@@ -56,10 +64,15 @@ docker-compose ps
 **Startup Sequence:**
 1. **ETCD** starts and becomes healthy
 2. **Danube Broker** starts (depends on ETCD)
-3. **Topic Init** creates `/default/events` topic (depends on Danube)
+3. **Topic Init** registers schema and creates topic with validation (depends on Danube)
+   - Registers `events-schema-v1` using `danube-admin-cli schemas register`
+   - Creates `/default/events` topic with schema validation using `danube-admin-cli topics create`
 4. **MinIO** starts and becomes healthy
 5. **MinIO Init** creates `delta-tables` bucket (depends on MinIO)
 6. **Delta Lake Sink** starts (depends on topic creation + MinIO bucket)
+   - Validates incoming messages against `events-schema-v1`
+   - Deserializes JSON payloads automatically
+   - Extracts fields using configured mappings
 
 Services:
 - **ETCD**: `http://localhost:2379` (Danube metadata storage)
@@ -76,11 +89,11 @@ Download the latest release for your system from [Danube Releases](https://githu
 
 ```bash
 # Linux
-wget https://github.com/danube-messaging/danube/releases/download/v0.5.2/danube-cli-linux
+wget https://github.com/danube-messaging/danube/releases/download/v0.6.0/danube-cli-linux
 chmod +x danube-cli-linux
 
 # macOS (Apple Silicon)
-wget https://github.com/danube-messaging/danube/releases/download/v0.5.2/danube-cli-macos
+wget https://github.com/danube-messaging/danube/releases/download/v0.6.0/danube-cli-macos
 chmod +x danube-cli-macos
 
 # Windows
@@ -96,10 +109,50 @@ chmod +x danube-cli-macos
 
 Or use the Docker image:
 ```bash
-docker pull ghcr.io/danube-messaging/danube-cli:v0.5.2
+docker pull ghcr.io/danube-messaging/danube-cli:latest
 ```
 
-### 3. Send Test Data
+### 3. Understand Schema Validation
+
+The example uses JSON Schema validation to ensure data quality:
+
+**Schema File** (`events-schema.json`):
+```json
+{
+  "type": "object",
+  "properties": {
+    "event_type": { "type": "string" },
+    "user_id": { "type": "string" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "product": { "type": "string" },
+    "amount": { "type": "integer" },
+    "currency": { "type": "string" }
+  },
+  "required": ["event_type", "user_id", "timestamp"]
+}
+```
+
+**Configuration** (`connector.toml`):
+```toml
+[[deltalake.topic_mappings]]
+topic = "/default/events"
+expected_schema_subject = "events-schema-v1"  # Validate against this schema
+
+field_mappings = [
+  { json_path = "event_type", column = "event_type", data_type = "Utf8", nullable = false },
+  { json_path = "user_id", column = "user_id", data_type = "Utf8", nullable = false },
+  { json_path = "timestamp", column = "timestamp", data_type = "Utf8", nullable = false },
+  # ... more fields
+]
+```
+
+**Benefits:**
+- ✅ Messages are validated before being accepted
+- ✅ Type-safe deserialization (runtime provides `serde_json::Value`)
+- ✅ Schema evolution support
+- ✅ Automatic field extraction using JSON paths
+
+### 4. Send Test Data
 
 ```bash
 # Send 10 sample events
@@ -108,13 +161,16 @@ docker pull ghcr.io/danube-messaging/danube-cli:v0.5.2
 # Send more events with custom settings
 COUNT=100 INTERVAL=100 ./test_producer.sh
 
-# Or use danube-cli directly
+# Or use danube-cli directly with schema validation
 ./danube-cli-linux produce \
   --service-addr http://localhost:6650 \
   --topic /default/events \
   --message '{"event_type":"purchase","user_id":"user_001","product":"laptop","amount":999,"currency":"USD","timestamp":"2024-01-01T12:00:00Z"}' \
+  --schema-subject events-schema-v1 \
   --reliable
 ```
+
+**Note:** The `--schema-subject` flag enables automatic validation against the registered schema.
 
 The test script generates various event types:
 - **user_signup** - New user registrations
@@ -123,7 +179,7 @@ The test script generates various event types:
 - **page_view** - Website page views
 - **api_call** - API endpoint calls
 
-### 4. Verify Data in Delta Lake
+### 5. Verify Data in Delta Lake
 
 #### Option 1: MinIO Console (Visual)
 
@@ -172,34 +228,6 @@ print(df.dtypes)
 EOF
 ```
 
-#### Option 3: Apache Spark (Advanced)
-
-```python
-from pyspark.sql import SparkSession
-
-spark = SparkSession.builder \
-    .appName("DeltaLakeExample") \
-    .config("spark.jars.packages", "io.delta:delta-core_2.12:2.4.0") \
-    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
-    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
-    .config("spark.hadoop.fs.s3a.endpoint", "http://localhost:9000") \
-    .config("spark.hadoop.fs.s3a.access.key", "minioadmin") \
-    .config("spark.hadoop.fs.s3a.secret.key", "minioadmin") \
-    .config("spark.hadoop.fs.s3a.path.style.access", "true") \
-    .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
-    .getOrCreate()
-
-# Read Delta table
-df = spark.read.format("delta").load("s3a://delta-tables/events")
-
-# Show data
-df.show(10)
-
-# Run queries
-df.createOrReplaceTempView("events")
-spark.sql("SELECT event_type, COUNT(*) as count FROM events GROUP BY event_type").show()
-```
-
 ## Configuration
 
 ### Connector Configuration (`connector.toml`)
@@ -211,33 +239,6 @@ The example includes a pre-configured `connector.toml` with:
 - **Schema**: Flexible schema supporting multiple event types
 - **Batching**: 100 records or 1 second flush interval
 - **Metadata**: Includes Danube metadata in `_danube_metadata` column
-
-Key settings:
-```toml
-[deltalake]
-storage_backend = "s3"
-s3_region = "us-east-1"
-s3_endpoint = "http://localhost:9000"  # MinIO
-s3_allow_http = true
-
-[[deltalake.topic_mappings]]
-topic = "/default/events"
-delta_table_path = "s3://delta-tables/events"
-schema_type = "Json"
-include_danube_metadata = true
-```
-
-### Environment Variables
-
-Credentials and connection URLs are set via environment variables in `docker-compose.yml`:
-
-```yaml
-environment:
-  - AWS_ACCESS_KEY_ID=minioadmin
-  - AWS_SECRET_ACCESS_KEY=minioadmin
-  - S3_ENDPOINT=http://minio:9000
-  - DANUBE_SERVICE_URL=http://danube-broker:6650
-```
 
 ## Monitoring
 

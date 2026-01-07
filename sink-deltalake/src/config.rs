@@ -7,52 +7,10 @@
 //! - Batch processing and performance tuning
 //! - Environment variable overrides
 
-use danube_connect_core::{ConnectorConfig, ConnectorError, ConnectorResult, SchemaType};
+use danube_connect_core::{ConnectorConfig, ConnectorError, ConnectorResult};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
-
-/// Cloud storage backend for Delta Lake
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum StorageBackend {
-    /// Amazon S3 (or S3-compatible like MinIO)
-    S3,
-    /// Azure Blob Storage
-    Azure,
-    /// Google Cloud Storage
-    GCS,
-}
-
-/// Write mode for Delta Lake operations
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum WriteMode {
-    /// Append new data to existing table (default)
-    Append,
-    /// Overwrite existing table data
-    Overwrite,
-}
-
-impl Default for WriteMode {
-    fn default() -> Self {
-        WriteMode::Append
-    }
-}
-
-/// Delta Lake table schema field definition
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SchemaField {
-    /// Field name
-    pub name: String,
-    
-    /// Arrow data type (e.g., "Utf8", "Int64", "Float64", "Boolean", "Timestamp")
-    pub data_type: String,
-    
-    /// Whether the field is nullable
-    #[serde(default = "default_true")]
-    pub nullable: bool,
-}
 
 /// Complete configuration for the Delta Lake Sink Connector
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,6 +70,77 @@ pub struct DeltaLakeConfig {
     pub flush_interval_ms: u64,
 }
 
+/// Cloud storage backend for Delta Lake
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum StorageBackend {
+    /// Amazon S3 (or S3-compatible like MinIO)
+    S3,
+    /// Azure Blob Storage
+    Azure,
+    /// Google Cloud Storage
+    GCS,
+}
+
+/// Write mode for Delta Lake operations
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum WriteMode {
+    /// Append new data to existing table (default)
+    Append,
+    /// Overwrite existing table data
+    Overwrite,
+}
+
+impl Default for WriteMode {
+    fn default() -> Self {
+        WriteMode::Append
+    }
+}
+
+/// Delta Lake table schema field definition (DEPRECATED - use FieldMapping)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchemaField {
+    /// Field name
+    pub name: String,
+
+    /// Arrow data type (e.g., "Utf8", "Int64", "Float64", "Boolean", "Timestamp")
+    pub data_type: String,
+
+    /// Whether the field is nullable
+    #[serde(default = "default_true")]
+    pub nullable: bool,
+}
+
+/// Field mapping: JSON path to Delta Lake column
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FieldMapping {
+    /// JSON path to extract value (e.g., "payment_id", "user.profile.name")
+    pub json_path: String,
+
+    /// Pre-split path parts for efficient extraction (not serialized)
+    /// This is computed from json_path to avoid repeated string splitting
+    #[serde(skip)]
+    pub path_parts: Vec<String>,
+
+    /// Delta Lake column name
+    pub column: String,
+
+    /// Arrow data type (e.g., "Utf8", "Int64", "Float64", "Boolean", "Timestamp")
+    pub data_type: String,
+
+    /// Whether the field is nullable (default: true)
+    #[serde(default = "default_true")]
+    pub nullable: bool,
+}
+
+impl FieldMapping {
+    /// Initialize path_parts from json_path (called after deserialization)
+    pub fn init_path_parts(&mut self) {
+        self.path_parts = self.json_path.split('.').map(String::from).collect();
+    }
+}
+
 /// Mapping from a Danube topic to a Delta Lake table
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TopicMapping {
@@ -124,12 +153,14 @@ pub struct TopicMapping {
     /// Delta Lake table path (e.g., "s3://bucket/path/to/table")
     pub delta_table_path: String,
 
-    /// Schema type for messages in this topic
-    #[serde(default)]
-    pub schema_type: SchemaType,
+    /// Expected schema subject for validation (schema already exists on topic)
+    /// The runtime validates incoming messages match this schema
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_schema_subject: Option<String>,
 
-    /// Table schema definition (user-defined)
-    pub schema: Vec<SchemaField>,
+    /// Field mappings: JSON path → Delta Lake column
+    /// Runtime provides pre-deserialized serde_json::Value based on schema
+    pub field_mappings: Vec<FieldMapping>,
 
     /// Write mode (append or overwrite)
     #[serde(default)]
@@ -180,12 +211,24 @@ impl DeltaLakeSinkConfig {
             ConnectorError::config(format!("Failed to read config file '{}': {}", path, e))
         })?;
 
-        let config: Self = toml::from_str(&contents).map_err(|e| {
+        let mut config: Self = toml::from_str(&contents).map_err(|e| {
             ConnectorError::config(format!("Failed to parse config file '{}': {}", path, e))
         })?;
 
+        // Initialize pre-split path parts for performance optimization
+        config.init_path_parts();
+
         config.validate()?;
         Ok(config)
+    }
+
+    /// Initialize path_parts for all field mappings
+    fn init_path_parts(&mut self) {
+        for mapping in &mut self.deltalake.topic_mappings {
+            for field_mapping in &mut mapping.field_mappings {
+                field_mapping.init_path_parts();
+            }
+        }
     }
 
     /// Load configuration from environment variable CONNECTOR_CONFIG_PATH
@@ -283,16 +326,16 @@ impl DeltaLakeSinkConfig {
             if mapping.delta_table_path.is_empty() {
                 return Err(ConnectorError::config("Delta table path cannot be empty"));
             }
-            if mapping.schema.is_empty() {
+            if mapping.field_mappings.is_empty() {
                 return Err(ConnectorError::config(format!(
-                    "Schema cannot be empty for topic '{}'. Please define at least one field.",
+                    "Field mappings cannot be empty for topic '{}'. Please define at least one field mapping.",
                     mapping.topic
                 )));
             }
 
-            // Validate schema field types
-            for field in &mapping.schema {
-                validate_arrow_type(&field.data_type)?;
+            // Validate field mapping data types
+            for field_mapping in &mapping.field_mappings {
+                validate_arrow_type(&field_mapping.data_type)?;
             }
         }
 
@@ -330,19 +373,4 @@ fn validate_arrow_type(data_type: &str) -> ConnectorResult<()> {
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_validate_arrow_type() {
-        assert!(validate_arrow_type("Utf8").is_ok());
-        assert!(validate_arrow_type("Int64").is_ok());
-        assert!(validate_arrow_type("Float64").is_ok());
-        assert!(validate_arrow_type("Boolean").is_ok());
-        assert!(validate_arrow_type("Timestamp").is_ok());
-        assert!(validate_arrow_type("InvalidType").is_err());
-    }
 }

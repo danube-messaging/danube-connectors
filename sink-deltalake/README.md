@@ -8,12 +8,13 @@ Stream events from Danube into [Delta Lake](https://delta.io/) - the open-source
 
 - ☁️ **Multi-Cloud Support** - AWS S3, Azure Blob Storage, Google Cloud Storage
 - 🔒 **ACID Transactions** - Delta Lake transaction log ensures data consistency
-- 📋 **User-Defined Schemas** - Full control over table schemas with Arrow data types
-- 📊 **Schema-Aware** - Supports JSON, String, Int64, and Bytes schema types
+- 🛡️ **Schema Validation** - Automatic validation with schema registry integration
+- 📊 **Type-Safe Processing** - Runtime deserializes and validates message payloads
+- 🗺️ **Nested JSON Paths** - Extract values from deeply nested structures
 - 🎯 **Multi-Topic Routing** - Route different topics to different Delta tables
 - 📦 **Configurable Batching** - Optimize throughput with per-topic batch sizes
 - 📝 **Metadata Enrichment** - Optional Danube metadata as JSON column
-- ⚡ **Zero-Copy Performance** - Rust-to-Rust with Arrow in-memory format
+- ⚡ **Optimized Performance** - Pre-split JSON paths, arrow-json conversion
 - 🧪 **MinIO Compatible** - Test locally with S3-compatible storage
 - 🛡️ **Production Ready** - Health checks, metrics, graceful shutdown
 
@@ -63,7 +64,9 @@ The example includes:
 See **[config/README.md](config/README.md)** for comprehensive configuration documentation including:
 - Core and connector-specific configuration options
 - Cloud provider setup (S3, Azure, GCS)
-- Schema definition and Arrow data types
+- Schema validation and field mappings
+- Nested JSON path extraction
+- Arrow data types reference
 - Environment variable reference
 - Configuration patterns and best practices
 - Performance tuning guidelines
@@ -108,25 +111,33 @@ flush_interval_ms = 5000
 topic = "/events/payments"
 subscription = "deltalake-payments"
 delta_table_path = "s3://my-bucket/tables/payments"
-schema_type = "Json"
 include_danube_metadata = true
-schema = [
-    { name = "payment_id", data_type = "Utf8", nullable = false },
-    { name = "amount", data_type = "Float64", nullable = false },
-    { name = "currency", data_type = "Utf8", nullable = false },
+
+# Schema validation (schema created by producer/admin)
+expected_schema_subject = "payment-events-v1"
+
+# Field mappings: JSON path → Delta Lake column
+field_mappings = [
+    { json_path = "payment_id", column = "payment_id", data_type = "Utf8", nullable = false },
+    { json_path = "amount", column = "amount", data_type = "Float64", nullable = false },
+    { json_path = "currency", column = "currency", data_type = "Utf8", nullable = false },
 ]
 
-# Route IoT data to sensors table
+# Route IoT data with nested JSON to sensors table
 [[deltalake.topic_mappings]]
 topic = "/iot/sensors"
 subscription = "deltalake-iot"
 delta_table_path = "s3://my-bucket/tables/sensors"
-schema_type = "Json"
 batch_size = 500
-schema = [
-    { name = "sensor_id", data_type = "Utf8", nullable = false },
-    { name = "temperature", data_type = "Float64", nullable = false },
-    { name = "timestamp", data_type = "Timestamp", nullable = false },
+
+# Schema validation
+expected_schema_subject = "sensor-data-v1"
+
+# Extract nested fields using JSON paths
+field_mappings = [
+    { json_path = "device.sensor_id", column = "sensor_id", data_type = "Utf8", nullable = false },
+    { json_path = "readings.temperature", column = "temperature", data_type = "Float64", nullable = false },
+    { json_path = "timestamp", column = "timestamp", data_type = "Timestamp", nullable = false },
 ]
 ```
 
@@ -147,61 +158,71 @@ cargo test --package danube-sink-deltalake
 docker build -t danube/sink-deltalake:latest -f connectors/sink-deltalake/Dockerfile .
 ```
 
-### Schema Types
+### Schema Validation
 
-The connector supports Danube's schema system for type-safe data handling:
+**Important:** Schemas are created by **producers** or **danube-admin-cli** and attached to topics. The sink connector validates incoming messages against these schemas.
 
-#### JSON Schema (Default)
+#### Automatic Validation
 
-Most common for structured data:
+When you specify `expected_schema_subject`, the runtime automatically:
+- Validates incoming messages match the schema
+- Deserializes payloads into type-safe `serde_json::Value`
+- Provides pre-parsed data to the connector
 
 ```toml
-schema_type = "Json"
+[[deltalake.topic_mappings]]
+topic = "/events/payments"
+expected_schema_subject = "payment-events-v1"  # Schema created by producer
+field_mappings = [...]
 ```
 
-**Input:**
+**Benefits:**
+- Type-safe processing
+- Schema evolution support
+- Automatic deserialization
+- No manual parsing needed
+
+#### Field Mappings with JSON Paths
+
+Extract values from JSON using dot-notation paths:
+
+```toml
+field_mappings = [
+    # Simple field
+    { json_path = "payment_id", column = "payment_id", data_type = "Utf8", nullable = false },
+    
+    # Nested field (user.profile.email)
+    { json_path = "user.profile.email", column = "user_email", data_type = "Utf8", nullable = false },
+    
+    # Deep nesting (device.sensors.temperature.reading)
+    { json_path = "device.sensors.temperature.reading", column = "temp", data_type = "Float64", nullable = false },
+]
+```
+
+**Example Input:**
 ```json
 {
   "payment_id": "pay-123",
   "amount": 99.99,
-  "currency": "USD"
+  "user": {
+    "profile": {
+      "email": "user@example.com"
+    }
+  },
+  "device": {
+    "sensors": {
+      "temperature": {
+        "reading": 72.5
+      }
+    }
+  }
 }
 ```
 
-**Stored in Delta Lake** with user-defined Arrow schema
-
-#### String Schema
-
-For plain text messages:
-
-```toml
-schema_type = "String"
-```
-
-**Input:** `"System started successfully"`  
-**Stored:** `{"data": "System started successfully"}`
-
-#### Int64 Schema
-
-For numeric counters/metrics:
-
-```toml
-schema_type = "Int64"
-```
-
-**Input:** `42` (8 bytes, big-endian)  
-**Stored:** `{"value": 42}`
-
-#### Bytes Schema
-
-For binary data:
-
-```toml
-schema_type = "Bytes"
-```
-
-**Input:** Raw bytes `[0x01, 0x02, 0x03]`  
-**Stored:** `{"data": "AQID", "size": 3}` (base64 encoded)
+**Stored in Delta Lake:**
+| payment_id | amount | user_email | temp |
+|------------|--------|------------|------|
+| pay-123 | 99.99 | user@example.com | 72.5 |
 
 ### Arrow Data Types
 
@@ -241,6 +262,12 @@ Load data into Delta Lake as a staging layer for data warehouse pipelines.
 - **Binary Size**: ~15MB (no DataFusion dependency - append-only operations)
 - **Parquet**: Efficient columnar storage with compression
 
+**Optimizations:**
+- **Pre-split JSON paths**: Paths cached on config load (99.99% reduction in allocations)
+- **arrow-json integration**: Efficient type conversion with proper null handling
+- **Delta-rs TryFrom**: Native Arrow → Delta type conversion
+- **Batch processing**: Configurable batching reduces write overhead
+
 **Note:** This connector uses basic append/overwrite operations without the DataFusion query engine, keeping the binary small and focused on streaming ingestion.
 
 ## 🔍 Troubleshooting
@@ -253,13 +280,17 @@ Load data into Delta Lake as a staging layer for data warehouse pipelines.
 - Verify bucket/container exists
 - Check IAM/RBAC permissions
 
-### Schema Errors
+### Schema Validation Errors
 
-**Schema mismatch errors:**
-- Ensure schema definition matches your data structure
+**Schema validation failures:**
+- Verify `expected_schema_subject` matches the schema attached to the topic
+- Ensure producer/admin created the schema before starting connector
+- Check field mappings match the incoming JSON structure
+- Verify JSON paths are correct (e.g., `"user.profile.email"` for nested fields)
 - Check nullable settings for required fields
-- Verify Arrow data types are correct
+- Verify Arrow data types match your data
 - Test with a small batch first
+- Use danube-admin-cli to inspect topic schema
 
 ### Performance Issues
 

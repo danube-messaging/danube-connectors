@@ -1,0 +1,44 @@
+# Rust build artifacts
+**/target/
+**/*.rs.bk
+
+# Cargo lock files (we want Cargo.lock for reproducible builds)
+# **/Cargo.lock
+
+# IDE files
+**/.idea/
+**/.vscode/
+**/.fleet/
+**/*.swp
+**/*.swo
+**/*~
+
+# OS files
+**/.DS_Store
+**/Thumbs.db
+
+# Git
+**/.git/
+**/.gitignore
+**/.gitattributes
+
+# Documentation
+**/README.md
+**/CHANGELOG.md
+**/LICENSE
+**/CONTRIBUTING.md
+
+# Example and test files (if not needed for build)
+**/example/
+**/examples/
+**/tests/
+
+# CI/CD
+**/.github/
+**/.gitlab-ci.yml
+**/.travis.yml
+
+# Docker files (no need to copy these into image)
+**/.dockerignore
+**/Dockerfile
+**/docker-compose.yml

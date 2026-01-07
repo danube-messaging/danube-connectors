@@ -8,25 +8,12 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /usr/src/app
 
-# Copy workspace configuration (single source of truth)
-COPY Cargo.toml Cargo.lock ./
+# Copy the sink-deltalake package
+COPY sink-deltalake ./sink-deltalake
 
-# Copy only the dependencies we need to build
-COPY danube-connect-core ./danube-connect-core
-COPY connectors/sink-deltalake ./connectors/sink-deltalake
-
-# Filter workspace members to only include what we copied
-# This keeps [workspace.dependencies] intact (single source of truth)
-# but removes references to missing connectors
-RUN sed -i '/members = \[/,/\]/c\
-members = [\
-    "danube-connect-core",\
-    "connectors/sink-deltalake",\
-]' Cargo.toml
-
-# Build the connector
-WORKDIR /usr/src/app
-RUN cargo build --package danube-sink-deltalake --release
+# Build the connector (standalone crate, not workspace)
+WORKDIR /usr/src/app/sink-deltalake
+RUN cargo build --release
 
 # Runtime stage
 FROM debian:bookworm-slim
@@ -39,7 +26,7 @@ RUN apt-get update && apt-get install -y \
 
 # Copy the binary from builder
 COPY --from=builder \
-    /usr/src/app/target/release/danube-sink-deltalake \
+    /usr/src/app/sink-deltalake/target/release/danube-sink-deltalake \
     /usr/local/bin/danube-sink-deltalake
 
 # Create non-root user

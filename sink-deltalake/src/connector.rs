@@ -107,15 +107,14 @@ impl DeltaLakeSinkConnector {
         let schema = crate::record::build_arrow_schema(mapping)?;
 
         // Convert Arrow fields to Delta StructFields
+        // Note: delta-rs 0.29 doesn't provide TryFrom traits for Arrow types
+        // Manual conversion provides explicit control over type mapping
         let delta_fields: Vec<deltalake::kernel::StructField> = schema
             .fields()
             .iter()
             .map(|f| {
-                deltalake::kernel::StructField::new(
-                    f.name().clone(),
-                    arrow_to_delta_type(f.data_type()),
-                    f.is_nullable(),
-                )
+                let delta_type = arrow_to_delta_datatype(f.data_type());
+                deltalake::kernel::StructField::new(f.name().clone(), delta_type, f.is_nullable())
             })
             .collect();
 
@@ -262,7 +261,7 @@ impl DeltaLakeSinkConnector {
     async fn check_and_flush_intervals(&mut self) -> ConnectorResult<()> {
         let now = Instant::now();
         let topics_to_check: Vec<String> = self.buffers.keys().cloned().collect();
-        
+
         for topic in topics_to_check {
             // Skip empty buffers
             if let Some(buffer) = self.buffers.get(&topic) {
@@ -272,7 +271,7 @@ impl DeltaLakeSinkConnector {
             } else {
                 continue;
             }
-            
+
             // Get mapping and check flush interval
             let mapping = match self
                 .config
@@ -284,14 +283,15 @@ impl DeltaLakeSinkConnector {
                 Some(m) => m,
                 None => continue,
             };
-            
-            let flush_interval_ms = mapping.effective_flush_interval_ms(self.config.deltalake.flush_interval_ms);
+
+            let flush_interval_ms =
+                mapping.effective_flush_interval_ms(self.config.deltalake.flush_interval_ms);
             let flush_interval = Duration::from_millis(flush_interval_ms);
-            
+
             // Check if flush interval has elapsed
             if let Some(last_flush) = self.last_flush_time.get(&topic) {
                 let time_since_flush = now.duration_since(*last_flush);
-                
+
                 if time_since_flush >= flush_interval {
                     let buffer_len = self.buffers.get(&topic).map(|b| b.len()).unwrap_or(0);
                     debug!(
@@ -305,7 +305,7 @@ impl DeltaLakeSinkConnector {
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -329,9 +329,10 @@ impl DeltaLakeSinkConnector {
                 })?;
 
             self.write_batch(&mapping, records).await?;
-            
+
             // Update last flush time
-            self.last_flush_time.insert(topic.to_string(), Instant::now());
+            self.last_flush_time
+                .insert(topic.to_string(), Instant::now());
         }
 
         Ok(())
@@ -352,6 +353,39 @@ impl DeltaLakeSinkConnector {
     }
 }
 
+/// Convert Arrow DataType to Delta DataType
+/// Simplified mapping for commonly used types
+fn arrow_to_delta_datatype(arrow_type: &arrow::datatypes::DataType) -> deltalake::kernel::DataType {
+    use arrow::datatypes::DataType as ArrowType;
+    use arrow::datatypes::TimeUnit;
+    use deltalake::kernel::DataType as DeltaType;
+    use deltalake::kernel::PrimitiveType;
+
+    match arrow_type {
+        ArrowType::Utf8 | ArrowType::LargeUtf8 => DeltaType::Primitive(PrimitiveType::String),
+        ArrowType::Int8 => DeltaType::Primitive(PrimitiveType::Byte),
+        ArrowType::Int16 => DeltaType::Primitive(PrimitiveType::Short),
+        ArrowType::Int32 => DeltaType::Primitive(PrimitiveType::Integer),
+        ArrowType::Int64 => DeltaType::Primitive(PrimitiveType::Long),
+        ArrowType::UInt8 => DeltaType::Primitive(PrimitiveType::Short), // Promote to signed
+        ArrowType::UInt16 => DeltaType::Primitive(PrimitiveType::Integer),
+        ArrowType::UInt32 => DeltaType::Primitive(PrimitiveType::Long),
+        ArrowType::UInt64 => DeltaType::Primitive(PrimitiveType::Long),
+        ArrowType::Float32 => DeltaType::Primitive(PrimitiveType::Float),
+        ArrowType::Float64 => DeltaType::Primitive(PrimitiveType::Double),
+        ArrowType::Boolean => DeltaType::Primitive(PrimitiveType::Boolean),
+        ArrowType::Binary | ArrowType::LargeBinary => DeltaType::Primitive(PrimitiveType::Binary),
+        ArrowType::Timestamp(TimeUnit::Microsecond, _) => {
+            DeltaType::Primitive(PrimitiveType::Timestamp)
+        }
+        ArrowType::Timestamp(TimeUnit::Millisecond, _) => {
+            DeltaType::Primitive(PrimitiveType::Timestamp)
+        }
+        ArrowType::Date32 | ArrowType::Date64 => DeltaType::Primitive(PrimitiveType::Date),
+        _ => panic!("Unsupported Arrow type for Delta Lake: {:?}", arrow_type),
+    }
+}
+
 #[async_trait]
 impl SinkConnector for DeltaLakeSinkConnector {
     async fn initialize(&mut self, _config: ConnectorConfig) -> ConnectorResult<()> {
@@ -363,11 +397,17 @@ impl SinkConnector for DeltaLakeSinkConnector {
 
         // Log topic mappings
         for mapping in &self.config.deltalake.topic_mappings {
+            let schema_info = mapping
+                .expected_schema_subject
+                .as_ref()
+                .map(|s| format!(", schema: {}", s))
+                .unwrap_or_default();
             info!(
-                "Topic Mapping: {} -> {} (schema fields: {})",
+                "Topic Mapping: {} -> {} (fields: {}{})",
                 mapping.topic,
                 mapping.delta_table_path,
-                mapping.schema.len()
+                mapping.field_mappings.len(),
+                schema_info
             );
         }
 
@@ -394,7 +434,8 @@ impl SinkConnector for DeltaLakeSinkConnector {
                     self.config.core.connector_name, mapping.subscription
                 ),
                 subscription_type: SubscriptionType::Shared,
-                expected_schema_subject: None, // No schema validation for Delta Lake sink (accepts any valid JSON)
+                // Runtime validates schema and provides pre-deserialized data
+                expected_schema_subject: mapping.expected_schema_subject.clone(),
             })
             .collect();
 
@@ -407,17 +448,17 @@ impl SinkConnector for DeltaLakeSinkConnector {
             record.topic(),
             record.offset()
         );
-        
+
         // Add to buffer
         let topic = record.topic().to_string();
         let buffer = self.buffers.entry(topic.clone()).or_insert_with(Vec::new);
-        
+
         // Initialize last flush time if this is the first message for this topic
         let now = Instant::now();
         self.last_flush_time.entry(topic.clone()).or_insert(now);
-        
+
         buffer.push(record);
-        
+
         debug!("Buffer size for topic {}: {}", topic, buffer.len());
 
         // Check if we should flush
@@ -432,20 +473,24 @@ impl SinkConnector for DeltaLakeSinkConnector {
             })?;
 
         let batch_size = mapping.effective_batch_size(self.config.deltalake.batch_size);
-        let flush_interval_ms = mapping.effective_flush_interval_ms(self.config.deltalake.flush_interval_ms);
+        let flush_interval_ms =
+            mapping.effective_flush_interval_ms(self.config.deltalake.flush_interval_ms);
         let flush_interval = Duration::from_millis(flush_interval_ms);
-        
+
         let last_flush = self.last_flush_time.get(&topic).unwrap();
         let time_since_flush = now.duration_since(*last_flush);
-        
+
         // Flush if batch size reached OR flush interval elapsed
         let should_flush_size = buffer.len() >= batch_size;
         let should_flush_time = !buffer.is_empty() && time_since_flush >= flush_interval;
-        
+
         if should_flush_size {
             debug!(
                 "Batch size reached for topic {} ({}/{}), flushing {} records",
-                topic, buffer.len(), batch_size, buffer.len()
+                topic,
+                buffer.len(),
+                batch_size,
+                buffer.len()
             );
             self.flush_topic(&topic).await?;
         } else if should_flush_time {
@@ -518,42 +563,5 @@ impl SinkConnector for DeltaLakeSinkConnector {
 
         info!("Delta Lake Sink Connector shutdown complete");
         Ok(())
-    }
-}
-
-/// Convert Arrow DataType to Delta DataType
-fn arrow_to_delta_type(arrow_type: &arrow::datatypes::DataType) -> deltalake::kernel::DataType {
-    use arrow::datatypes::DataType as ArrowType;
-    use arrow::datatypes::TimeUnit;
-    use deltalake::kernel::DataType as DeltaType;
-    use deltalake::kernel::PrimitiveType;
-
-    match arrow_type {
-        ArrowType::Utf8 => DeltaType::Primitive(PrimitiveType::String),
-        ArrowType::Int8 => DeltaType::Primitive(PrimitiveType::Byte),
-        ArrowType::Int16 => DeltaType::Primitive(PrimitiveType::Short),
-        ArrowType::Int32 => DeltaType::Primitive(PrimitiveType::Integer),
-        ArrowType::Int64 => DeltaType::Primitive(PrimitiveType::Long),
-        ArrowType::Float32 => DeltaType::Primitive(PrimitiveType::Float),
-        ArrowType::Float64 => DeltaType::Primitive(PrimitiveType::Double),
-        ArrowType::Boolean => DeltaType::Primitive(PrimitiveType::Boolean),
-        ArrowType::Binary => DeltaType::Primitive(PrimitiveType::Binary),
-        ArrowType::Timestamp(TimeUnit::Microsecond, _) => {
-            DeltaType::Primitive(PrimitiveType::Timestamp)
-        }
-        ArrowType::Date32 => DeltaType::Primitive(PrimitiveType::Date),
-        // Unsigned integers - convert to next larger signed type
-        ArrowType::UInt8 => DeltaType::Primitive(PrimitiveType::Short),
-        ArrowType::UInt16 => DeltaType::Primitive(PrimitiveType::Integer),
-        ArrowType::UInt32 => DeltaType::Primitive(PrimitiveType::Long),
-        ArrowType::UInt64 => DeltaType::Primitive(PrimitiveType::Long),
-        // Unsupported types - fail explicitly rather than silent conversion
-        unsupported => {
-            panic!(
-                "Unsupported Arrow type for Delta Lake: {:?}. \
-                 Please update your schema definition to use supported types.",
-                unsupported
-            )
-        }
     }
 }

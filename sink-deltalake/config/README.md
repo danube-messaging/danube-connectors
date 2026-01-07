@@ -8,7 +8,8 @@ Complete reference for configuring the Delta Lake Sink Connector.
 - [Core Settings](#core-settings)
 - [Cloud Provider Setup](#cloud-provider-setup)
 - [Topic Mappings](#topic-mappings)
-- [Schema Definition](#schema-definition)
+- [Schema Validation](#schema-validation)
+- [Field Mappings](#field-mappings)
 - [Batch Processing](#batch-processing)
 - [Environment Variables](#environment-variables)
 - [Examples](#examples)
@@ -139,18 +140,20 @@ Map Danube topics to Delta Lake tables:
 topic = "/events/payments"
 subscription = "deltalake-payments"
 delta_table_path = "s3://my-bucket/tables/payments"
-schema_type = "Json"
 write_mode = "append"  # or "overwrite"
 include_danube_metadata = true
 
-# Define table schema (compact inline format)
-schema = [
-    { name = "payment_id", data_type = "Utf8", nullable = false },
-    { name = "user_id", data_type = "Utf8", nullable = false },
-    { name = "amount", data_type = "Float64", nullable = false },
-    { name = "currency", data_type = "Utf8", nullable = false },
-    { name = "status", data_type = "Utf8", nullable = false },
-    { name = "created_at", data_type = "Timestamp", nullable = false },
+# Schema validation (schema already exists on topic via producer/admin)
+expected_schema_subject = "payment-events-v1"
+
+# Field mappings: JSON path → Delta Lake column
+field_mappings = [
+    { json_path = "payment_id", column = "payment_id", data_type = "Utf8", nullable = false },
+    { json_path = "user_id", column = "user_id", data_type = "Utf8", nullable = false },
+    { json_path = "amount", column = "amount", data_type = "Float64", nullable = false },
+    { json_path = "currency", column = "currency", data_type = "Utf8", nullable = false },
+    { json_path = "status", column = "status", data_type = "Utf8", nullable = false },
+    { json_path = "created_at", column = "created_at", data_type = "Timestamp", nullable = false },
 ]
 ```
 
@@ -161,26 +164,94 @@ schema = [
 | `topic` | String | Yes | Danube topic to consume from (format: `/namespace/topic`) |
 | `subscription` | String | Yes | Subscription name for this consumer |
 | `delta_table_path` | String | Yes | Full path to Delta table (includes cloud prefix) |
-| `schema_type` | String | Yes | Danube schema type: `Json`, `String`, `Int64`, `Bytes` |
-| `schema` | Array | Yes | Arrow schema definition (see below) |
+| `expected_schema_subject` | String | Recommended | Schema subject for validation (created by producer/admin) |
+| `field_mappings` | Array | Yes | Field mappings from JSON to Delta Lake columns (see below) |
 | `write_mode` | String | No | `append` (default) or `overwrite` |
 | `include_danube_metadata` | Boolean | No | Add `_danube_metadata` JSON column (default: false) |
 | `batch_size` | Integer | No | Override global batch size for this topic |
 | `flush_interval_ms` | Integer | No | Override global flush interval for this topic |
 
-## Schema Definition
+## Schema Validation
 
-Define your Delta Lake table schema using Arrow data types:
+**Important:** Schemas are created by **producers** or **danube-admin-cli** and attached to topics. The sink connector only validates that incoming messages match the expected schema.
 
-### Compact Inline Format (Recommended)
+### Schema Subject (Recommended)
+
+Specify the schema subject to enable automatic validation:
 
 ```toml
-schema = [
-    { name = "field_name", data_type = "Utf8", nullable = true },
-    { name = "amount", data_type = "Float64", nullable = false },
-    { name = "created_at", data_type = "Timestamp", nullable = false },
+[[deltalake.topic_mappings]]
+topic = "/events/payments"
+expected_schema_subject = "payment-events-v1"  # Schema created by producer
+field_mappings = [...]
+```
+
+**Benefits:**
+- Runtime automatically validates messages
+- Type-safe deserialization
+- Schema evolution support
+- No manual parsing needed
+
+**Note:** If `expected_schema_subject` is not specified, messages are consumed without validation.
+
+## Field Mappings
+
+Define how JSON fields map to Delta Lake columns:
+
+### Basic Field Mapping
+
+```toml
+field_mappings = [
+    { json_path = "user_id", column = "user_id", data_type = "Utf8", nullable = false },
+    { json_path = "amount", column = "amount", data_type = "Float64", nullable = false },
+    { json_path = "created_at", column = "created_at", data_type = "Timestamp", nullable = false },
 ]
 ```
+
+### Nested JSON Path Support
+
+Extract values from nested JSON structures:
+
+```toml
+field_mappings = [
+    # Simple path
+    { json_path = "payment_id", column = "payment_id", data_type = "Utf8", nullable = false },
+    
+    # Nested path (extracts user.profile.email)
+    { json_path = "user.profile.email", column = "user_email", data_type = "Utf8", nullable = false },
+    
+    # Deep nesting
+    { json_path = "order.shipping.address.city", column = "city", data_type = "Utf8", nullable = true },
+]
+```
+
+**Example JSON:**
+```json
+{
+  "payment_id": "pay_123",
+  "user": {
+    "profile": {
+      "email": "user@example.com"
+    }
+  },
+  "order": {
+    "shipping": {
+      "address": {
+        "city": "San Francisco"
+      }
+    }
+  }
+}
+```
+
+### Field Mapping Options
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `json_path` | String | Yes | JSON path to extract (supports nested: `"user.profile.name"`) |
+| `column` | String | Yes | Delta Lake column name |
+| `data_type` | String | Yes | Arrow data type (see below) |
+| `nullable` | Boolean | No | Allow null values (default: true) |
 
 ### Supported Arrow Data Types
 
@@ -201,29 +272,31 @@ schema = [
 | `Timestamp` | Timestamp (microsecond precision) | `2024-01-01T12:00:00Z` |
 | `Binary` | Binary data | Raw bytes |
 
-### Schema Examples
+### Field Mapping Examples
 
 **E-commerce Orders:**
 ```toml
-schema = [
-    { name = "order_id", data_type = "Utf8", nullable = false },
-    { name = "customer_id", data_type = "Utf8", nullable = false },
-    { name = "total_amount", data_type = "Float64", nullable = false },
-    { name = "item_count", data_type = "Int32", nullable = false },
-    { name = "is_paid", data_type = "Boolean", nullable = false },
-    { name = "order_date", data_type = "Timestamp", nullable = false },
+expected_schema_subject = "orders-v1"
+field_mappings = [
+    { json_path = "order_id", column = "order_id", data_type = "Utf8", nullable = false },
+    { json_path = "customer_id", column = "customer_id", data_type = "Utf8", nullable = false },
+    { json_path = "total_amount", column = "total_amount", data_type = "Float64", nullable = false },
+    { json_path = "item_count", column = "item_count", data_type = "Int32", nullable = false },
+    { json_path = "is_paid", column = "is_paid", data_type = "Boolean", nullable = false },
+    { json_path = "order_date", column = "order_date", data_type = "Timestamp", nullable = false },
 ]
 ```
 
-**IoT Sensor Data:**
+**IoT Sensor Data with Nested Fields:**
 ```toml
-schema = [
-    { name = "sensor_id", data_type = "Utf8", nullable = false },
-    { name = "temperature", data_type = "Float32", nullable = false },
-    { name = "humidity", data_type = "Float32", nullable = false },
-    { name = "pressure", data_type = "Float32", nullable = true },
-    { name = "battery_level", data_type = "UInt8", nullable = true },
-    { name = "timestamp", data_type = "Timestamp", nullable = false },
+expected_schema_subject = "sensor-data-v1"
+field_mappings = [
+    { json_path = "device.sensor_id", column = "sensor_id", data_type = "Utf8", nullable = false },
+    { json_path = "readings.temperature", column = "temperature", data_type = "Float32", nullable = false },
+    { json_path = "readings.humidity", column = "humidity", data_type = "Float32", nullable = false },
+    { json_path = "readings.pressure", column = "pressure", data_type = "Float32", nullable = true },
+    { json_path = "device.battery_level", column = "battery_level", data_type = "UInt8", nullable = true },
+    { json_path = "timestamp", column = "timestamp", data_type = "Timestamp", nullable = false },
 ]
 ```
 
@@ -253,14 +326,16 @@ flush_interval_ms = 5000
 topic = "/events/high-volume"
 batch_size = 5000
 flush_interval_ms = 10000
-schema = [...]
+expected_schema_subject = "high-volume-v1"
+field_mappings = [...]
 
 # Low-latency topic with smaller batches
 [[deltalake.topic_mappings]]
 topic = "/alerts/critical"
 batch_size = 100
 flush_interval_ms = 1000
-schema = [...]
+expected_schema_subject = "critical-alerts-v1"
+field_mappings = [...]
 ```
 
 ### Performance Tuning
@@ -335,24 +410,24 @@ flush_interval_ms = 5000
 topic = "/events/payments"
 subscription = "deltalake-payments"
 delta_table_path = "s3://my-bucket/tables/payments"
-schema_type = "Json"
 include_danube_metadata = true
-schema = [
-    { name = "payment_id", data_type = "Utf8", nullable = false },
-    { name = "amount", data_type = "Float64", nullable = false },
-    { name = "currency", data_type = "Utf8", nullable = false },
+expected_schema_subject = "payment-events-v1"
+field_mappings = [
+    { json_path = "payment_id", column = "payment_id", data_type = "Utf8", nullable = false },
+    { json_path = "amount", column = "amount", data_type = "Float64", nullable = false },
+    { json_path = "currency", column = "currency", data_type = "Utf8", nullable = false },
 ]
 
 [[deltalake.topic_mappings]]
 topic = "/events/users"
 subscription = "deltalake-users"
 delta_table_path = "s3://my-bucket/tables/users"
-schema_type = "Json"
 batch_size = 2000
-schema = [
-    { name = "user_id", data_type = "Utf8", nullable = false },
-    { name = "email", data_type = "Utf8", nullable = false },
-    { name = "signup_date", data_type = "Timestamp", nullable = false },
+expected_schema_subject = "user-events-v1"
+field_mappings = [
+    { json_path = "user_id", column = "user_id", data_type = "Utf8", nullable = false },
+    { json_path = "email", column = "email", data_type = "Utf8", nullable = false },
+    { json_path = "signup_date", column = "signup_date", data_type = "Timestamp", nullable = false },
 ]
 ```
 
@@ -374,11 +449,11 @@ flush_interval_ms = 5000
 topic = "/iot/sensors"
 subscription = "deltalake-sensors"
 delta_table_path = "abfss://delta-tables@mystorageaccount.dfs.core.windows.net/sensors"
-schema_type = "Json"
-schema = [
-    { name = "sensor_id", data_type = "Utf8", nullable = false },
-    { name = "temperature", data_type = "Float64", nullable = false },
-    { name = "timestamp", data_type = "Timestamp", nullable = false },
+expected_schema_subject = "sensor-data-v1"
+field_mappings = [
+    { json_path = "sensor_id", column = "sensor_id", data_type = "Utf8", nullable = false },
+    { json_path = "temperature", column = "temperature", data_type = "Float64", nullable = false },
+    { json_path = "timestamp", column = "timestamp", data_type = "Timestamp", nullable = false },
 ]
 ```
 
@@ -400,43 +475,59 @@ flush_interval_ms = 10000
 topic = "/analytics/events"
 subscription = "deltalake-analytics"
 delta_table_path = "gs://my-bucket/tables/analytics"
-schema_type = "Json"
 include_danube_metadata = true
-schema = [
-    { name = "event_id", data_type = "Utf8", nullable = false },
-    { name = "user_id", data_type = "Utf8", nullable = false },
-    { name = "event_type", data_type = "Utf8", nullable = false },
-    { name = "timestamp", data_type = "Timestamp", nullable = false },
+expected_schema_subject = "analytics-events-v1"
+field_mappings = [
+    { json_path = "event_id", column = "event_id", data_type = "Utf8", nullable = false },
+    { json_path = "user_id", column = "user_id", data_type = "Utf8", nullable = false },
+    { json_path = "event_type", column = "event_type", data_type = "Utf8", nullable = false },
+    { json_path = "timestamp", column = "timestamp", data_type = "Timestamp", nullable = false },
 ]
 ```
 
 ## Best Practices
 
-1. **Schema Design**
-   - Define schemas explicitly - don't rely on schema inference
+1. **Schema Management**
+   - **Create schemas via producer or danube-admin-cli** - Sink connectors only validate
+   - Use `expected_schema_subject` for automatic schema validation
+   - Define explicit field mappings - avoid schema inference
    - Use appropriate data types for your data
    - Mark required fields as `nullable = false`
    - Include timestamp fields for time-series data
+   - Use nested JSON paths for complex data structures
 
-2. **Batching**
+2. **Field Mappings**
+   - Keep field mappings simple and flat when possible
+   - Use descriptive column names in Delta Lake
+   - Leverage nested JSON paths for extracting deeply nested data
+   - Example: `"user.profile.email"` instead of flattening in producer
+   - Pre-split paths are cached for performance (no repeated parsing)
+
+3. **Batching**
    - Start with default batch sizes (1000 records, 5s flush)
    - Tune based on your throughput and latency requirements
    - Use per-topic overrides for different workloads
+   - Higher batches = better throughput, higher latency
+   - Lower batches = lower latency, more frequent writes
 
-3. **Security**
+4. **Security**
    - Never put credentials in TOML files
    - Use environment variables for all secrets
    - Use IAM roles/managed identities when possible
    - Rotate credentials regularly
+   - Limit access to Delta Lake storage locations
 
-4. **Monitoring**
+5. **Monitoring**
    - Monitor Prometheus metrics on `metrics_port`
    - Watch for batch flush times
    - Monitor Delta Lake transaction log size
    - Set up alerts for connection failures
+   - Track schema validation errors
 
-5. **Testing**
+6. **Testing**
    - Test locally with MinIO before deploying to cloud
-   - Verify schema matches your data structure
+   - Create test schemas via danube-admin-cli
+   - Verify field mappings extract correct values
    - Test with small batches first
    - Validate data in Delta Lake after writes
+   - Test nested JSON path extraction

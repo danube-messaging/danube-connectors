@@ -32,18 +32,20 @@ flush_interval_ms = 3000    # OR flush after 3 seconds (whichever comes first)
 topic = "/events/payments"
 subscription = "deltalake-payments"
 delta_table_path = "s3://my-bucket/tables/payments"
-schema_type = "Json"
 write_mode = "append"
 include_danube_metadata = true
 
-# Define table schema (compact inline format)
-schema = [
-    { name = "payment_id", data_type = "Utf8", nullable = false },
-    { name = "user_id", data_type = "Utf8", nullable = false },
-    { name = "amount", data_type = "Float64", nullable = false },
-    { name = "currency", data_type = "Utf8", nullable = false },
-    { name = "status", data_type = "Utf8", nullable = false },
-    { name = "created_at", data_type = "Timestamp", nullable = false },
+# Schema validation (schema already exists on topic via producer/admin)
+expected_schema_subject = "payment-events-v1"
+
+# Field mappings: JSON path → Delta Lake column
+field_mappings = [
+    { json_path = "payment_id", column = "payment_id", data_type = "Utf8", nullable = false },
+    { json_path = "user_id", column = "user_id", data_type = "Utf8", nullable = false },
+    { json_path = "amount", column = "amount", data_type = "Float64", nullable = false },
+    { json_path = "currency", column = "currency", data_type = "Utf8", nullable = false },
+    { json_path = "status", column = "status", data_type = "Utf8", nullable = false },
+    { json_path = "created_at", column = "created_at", data_type = "Timestamp", nullable = false },
 ]
 
 #######################
@@ -53,19 +55,21 @@ schema = [
 topic = "/events/users"
 subscription = "deltalake-users"
 delta_table_path = "s3://my-bucket/tables/users"
-schema_type = "Json"
 write_mode = "append"
 include_danube_metadata = false
+
+# Schema validation (schema already exists on topic via producer/admin)
+expected_schema_subject = "user-events-v1"
 
 # Higher batch size for high-volume topic
 batch_size = 2000
 
-# Define table schema (compact inline format)
-schema = [
-    { name = "user_id", data_type = "Utf8", nullable = false },
-    { name = "email", data_type = "Utf8", nullable = false },
-    { name = "name", data_type = "Utf8", nullable = true },
-    { name = "age", data_type = "Int32", nullable = true },
-    { name = "is_active", data_type = "Boolean", nullable = false },
-    { name = "signup_date", data_type = "Timestamp", nullable = false },
+# Field mappings: JSON path → Delta Lake column
+field_mappings = [
+    { json_path = "user_id", column = "user_id", data_type = "Utf8", nullable = false },
+    { json_path = "email", column = "email", data_type = "Utf8", nullable = false },
+    { json_path = "name", column = "name", data_type = "Utf8", nullable = true },
+    { json_path = "age", column = "age", data_type = "Int32", nullable = true },
+    { json_path = "is_active", column = "is_active", data_type = "Boolean", nullable = false },
+    { json_path = "signup_date", column = "signup_date", data_type = "Timestamp", nullable = false },
 ]

@@ -7,26 +7,23 @@
 //! Danube metadata as a JSON column.
 
 use crate::config::TopicMapping;
-use arrow::array::{
-    ArrayRef, BooleanArray, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array,
-    Int8Array, StringArray, TimestampMicrosecondArray, UInt16Array, UInt32Array, UInt64Array,
-    UInt8Array,
-};
+use arrow::array::{ArrayRef, StringArray};
 use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use arrow::record_batch::RecordBatch;
+use arrow_json::ReaderBuilder;
 use chrono::Utc;
 use danube_connect_core::{ConnectorError, ConnectorResult, SinkRecord};
 use serde_json::Value;
+use std::io::Cursor;
 use std::sync::Arc;
 
 /// Convert a batch of Danube SinkRecords into an Arrow RecordBatch
 ///
-/// This function:
-/// 1. Gets typed payload from each record (already deserialized by runtime)
-/// 2. Extracts fields according to user-defined schema
-/// 3. Optionally adds Danube metadata as a JSON column
-/// 4. Builds Arrow arrays for each column
-/// 5. Creates a RecordBatch
+/// This function uses arrow-json's ReaderBuilder for efficient, robust conversion:
+/// 1. Gets typed payloads from records (already deserialized by runtime)
+/// 2. Transforms JSON based on field_mappings (supports nested JSON paths)
+/// 3. Uses arrow-json to build RecordBatch with proper null handling and type coercion
+/// 4. Optionally adds Danube metadata as a JSON column
 pub fn to_record_batch(
     records: &[SinkRecord],
     mapping: &TopicMapping,
@@ -37,41 +34,114 @@ pub fn to_record_batch(
         ));
     }
 
-    // Build Arrow schema from config
-    let schema = build_arrow_schema(mapping)?;
+    // Build Arrow schema from field mappings (without metadata)
+    let schema = build_arrow_schema_without_metadata(mapping)?;
 
-    // Get typed payloads from records (already deserialized by runtime)
-    let deserialized: Vec<Value> = records.iter().map(|r| r.payload().clone()).collect();
+    // Transform payloads to match target schema (handle JSON path remapping)
+    let transformed_json: Vec<Value> = records
+        .iter()
+        .map(|record| transform_payload_for_schema(record.payload(), mapping))
+        .collect();
 
-    // Build arrays for each field in the schema
-    let mut arrays: Vec<ArrayRef> = Vec::new();
+    // Use arrow-json to build RecordBatch efficiently
+    let batch = json_to_record_batch(schema, &transformed_json)?;
 
-    for field in &mapping.schema {
-        let array = build_array_for_field(&field.name, &field.data_type, &deserialized)?;
-        arrays.push(array);
-    }
-
-    // Add metadata column if configured
+    // If metadata is needed, add it as an additional column
     if mapping.include_danube_metadata {
         let metadata_array = build_metadata_array(records)?;
-        arrays.push(metadata_array);
+        return add_metadata_column(batch, metadata_array);
     }
-
-    // Create RecordBatch
-    let batch = RecordBatch::try_new(schema, arrays)
-        .map_err(|e| ConnectorError::fatal(format!("Failed to create Arrow RecordBatch: {}", e)))?;
 
     Ok(batch)
 }
 
-/// Build Arrow schema from user-defined schema configuration
+/// Transform a JSON payload based on field mappings
+/// Extracts values using JSON paths and creates a flat JSON object matching the target schema
+fn transform_payload_for_schema(payload: &Value, mapping: &TopicMapping) -> Value {
+    let mut transformed = serde_json::Map::new();
+
+    for field_mapping in &mapping.field_mappings {
+        // Use pre-split path_parts for optimized extraction (avoids repeated string splitting)
+        if let Some(value) = extract_value_by_path_parts(payload, &field_mapping.path_parts) {
+            transformed.insert(field_mapping.column.clone(), value.clone());
+        }
+    }
+
+    Value::Object(transformed)
+}
+
+/// Convert JSON values to Arrow RecordBatch using arrow-json
+/// This is more efficient and robust than manual array building
+fn json_to_record_batch(
+    schema: Arc<Schema>,
+    json_values: &[Value],
+) -> ConnectorResult<RecordBatch> {
+    // Convert JSON values to newline-delimited JSON bytes
+    let json_bytes: Vec<u8> = json_values
+        .iter()
+        .map(|v| v.to_string())
+        .collect::<Vec<String>>()
+        .join("\n")
+        .into_bytes();
+
+    // Use arrow-json reader to parse
+    let cursor = Cursor::new(json_bytes);
+    let mut reader = ReaderBuilder::new(schema)
+        .build(cursor)
+        .map_err(|e| ConnectorError::fatal(format!("Failed to create JSON reader: {}", e)))?;
+
+    // Read the batch
+    let batch = reader
+        .next()
+        .ok_or_else(|| ConnectorError::fatal("No batch produced from JSON reader"))?
+        .map_err(|e| ConnectorError::fatal(format!("Failed to read JSON batch: {}", e)))?;
+
+    Ok(batch)
+}
+
+/// Add metadata column to an existing RecordBatch
+fn add_metadata_column(
+    batch: RecordBatch,
+    metadata_array: ArrayRef,
+) -> ConnectorResult<RecordBatch> {
+    let mut columns: Vec<ArrayRef> = batch.columns().to_vec();
+    columns.push(metadata_array);
+
+    let mut fields: Vec<Field> = batch
+        .schema()
+        .fields()
+        .iter()
+        .map(|f| (**f).clone())
+        .collect();
+    fields.push(Field::new("_danube_metadata", DataType::Utf8, false));
+
+    let new_schema = Arc::new(Schema::new(fields));
+
+    RecordBatch::try_new(new_schema, columns)
+        .map_err(|e| ConnectorError::fatal(format!("Failed to add metadata column: {}", e)))
+}
+
+/// Build Arrow schema from field mappings (without metadata column)
+fn build_arrow_schema_without_metadata(mapping: &TopicMapping) -> ConnectorResult<Arc<Schema>> {
+    let mut fields: Vec<Field> = Vec::new();
+
+    for field_mapping in &mapping.field_mappings {
+        let data_type = parse_arrow_type(&field_mapping.data_type)?;
+        let field = Field::new(&field_mapping.column, data_type, field_mapping.nullable);
+        fields.push(field);
+    }
+
+    Ok(Arc::new(Schema::new(fields)))
+}
+
+/// Build Arrow schema from field mappings
 pub fn build_arrow_schema(mapping: &TopicMapping) -> ConnectorResult<Arc<Schema>> {
     let mut fields: Vec<Field> = Vec::new();
 
-    // Add user-defined fields
-    for schema_field in &mapping.schema {
-        let data_type = parse_arrow_type(&schema_field.data_type)?;
-        let field = Field::new(&schema_field.name, data_type, schema_field.nullable);
+    // Add fields from field mappings
+    for field_mapping in &mapping.field_mappings {
+        let data_type = parse_arrow_type(&field_mapping.data_type)?;
+        let field = Field::new(&field_mapping.column, data_type, field_mapping.nullable);
         fields.push(field);
     }
 
@@ -111,175 +181,18 @@ fn parse_arrow_type(type_str: &str) -> ConnectorResult<DataType> {
     Ok(data_type)
 }
 
-/// Build an Arrow array for a specific field
-fn build_array_for_field(
-    field_name: &str,
-    data_type: &str,
-    values: &[Value],
-) -> ConnectorResult<ArrayRef> {
-    match data_type {
-        "Utf8" => {
-            let array: StringArray = values
-                .iter()
-                .map(|v| extract_string_field(v, field_name))
-                .collect();
-            Ok(Arc::new(array))
-        }
-        "Int8" => {
-            let array: Int8Array = values
-                .iter()
-                .map(|v| extract_int_field(v, field_name).map(|n| n as i8))
-                .collect();
-            Ok(Arc::new(array))
-        }
-        "Int16" => {
-            let array: Int16Array = values
-                .iter()
-                .map(|v| extract_int_field(v, field_name).map(|n| n as i16))
-                .collect();
-            Ok(Arc::new(array))
-        }
-        "Int32" => {
-            let array: Int32Array = values
-                .iter()
-                .map(|v| extract_int_field(v, field_name).map(|n| n as i32))
-                .collect();
-            Ok(Arc::new(array))
-        }
-        "Int64" => {
-            let array: Int64Array = values
-                .iter()
-                .map(|v| extract_int_field(v, field_name))
-                .collect();
-            Ok(Arc::new(array))
-        }
-        "UInt8" => {
-            let array: UInt8Array = values
-                .iter()
-                .map(|v| extract_uint_field(v, field_name).map(|n| n as u8))
-                .collect();
-            Ok(Arc::new(array))
-        }
-        "UInt16" => {
-            let array: UInt16Array = values
-                .iter()
-                .map(|v| extract_uint_field(v, field_name).map(|n| n as u16))
-                .collect();
-            Ok(Arc::new(array))
-        }
-        "UInt32" => {
-            let array: UInt32Array = values
-                .iter()
-                .map(|v| extract_uint_field(v, field_name).map(|n| n as u32))
-                .collect();
-            Ok(Arc::new(array))
-        }
-        "UInt64" => {
-            let array: UInt64Array = values
-                .iter()
-                .map(|v| extract_uint_field(v, field_name))
-                .collect();
-            Ok(Arc::new(array))
-        }
-        "Float32" => {
-            let array: Float32Array = values
-                .iter()
-                .map(|v| extract_float_field(v, field_name).map(|n| n as f32))
-                .collect();
-            Ok(Arc::new(array))
-        }
-        "Float64" => {
-            let array: Float64Array = values
-                .iter()
-                .map(|v| extract_float_field(v, field_name))
-                .collect();
-            Ok(Arc::new(array))
-        }
-        "Boolean" => {
-            let array: BooleanArray = values
-                .iter()
-                .map(|v| extract_bool_field(v, field_name))
-                .collect();
-            Ok(Arc::new(array))
-        }
-        "Timestamp" => {
-            let array: TimestampMicrosecondArray = values
-                .iter()
-                .map(|v| extract_timestamp_field(v, field_name))
-                .collect();
-            Ok(Arc::new(array))
-        }
-        _ => Err(ConnectorError::fatal(format!(
-            "Unsupported data type for field '{}': {}",
-            field_name, data_type
-        ))),
+/// Extract value from JSON using pre-split path parts (optimized)
+/// Avoids repeated string splitting for better performance
+fn extract_value_by_path_parts<'a>(value: &'a Value, path_parts: &[String]) -> Option<&'a Value> {
+    let mut current = value;
+
+    for part in path_parts {
+        current = current.get(part.as_str())?;
     }
+
+    Some(current)
 }
 
-/// Extract string field from JSON value
-fn extract_string_field(value: &Value, field_name: &str) -> Option<String> {
-    match value {
-        Value::Object(map) => map
-            .get(field_name)
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        _ => None,
-    }
-}
-
-/// Extract integer field from JSON value
-fn extract_int_field(value: &Value, field_name: &str) -> Option<i64> {
-    match value {
-        Value::Object(map) => map.get(field_name).and_then(|v| v.as_i64()),
-        _ => None,
-    }
-}
-
-/// Extract unsigned integer field from JSON value
-fn extract_uint_field(value: &Value, field_name: &str) -> Option<u64> {
-    match value {
-        Value::Object(map) => map.get(field_name).and_then(|v| v.as_u64()),
-        _ => None,
-    }
-}
-
-/// Extract float field from JSON value
-fn extract_float_field(value: &Value, field_name: &str) -> Option<f64> {
-    match value {
-        Value::Object(map) => map.get(field_name).and_then(|v| v.as_f64()),
-        _ => None,
-    }
-}
-
-/// Extract boolean field from JSON value
-fn extract_bool_field(value: &Value, field_name: &str) -> Option<bool> {
-    match value {
-        Value::Object(map) => map.get(field_name).and_then(|v| v.as_bool()),
-        _ => None,
-    }
-}
-
-/// Extract timestamp field from JSON value (expects ISO 8601 string or Unix timestamp)
-fn extract_timestamp_field(value: &Value, field_name: &str) -> Option<i64> {
-    match value {
-        Value::Object(map) => {
-            if let Some(field_value) = map.get(field_name) {
-                // Try parsing as Unix timestamp (seconds)
-                if let Some(timestamp_secs) = field_value.as_i64() {
-                    return Some(timestamp_secs * 1_000_000); // Convert to microseconds
-                }
-                // Try parsing as ISO 8601 string
-                if let Some(timestamp_str) = field_value.as_str() {
-                    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(timestamp_str) {
-                        return Some(dt.timestamp_micros());
-                    }
-                }
-            }
-            None
-        }
-        _ => None,
-    }
-}
 
 /// Build metadata array with Danube message metadata as JSON
 fn build_metadata_array(records: &[SinkRecord]) -> ConnectorResult<ArrayRef> {
@@ -291,7 +204,6 @@ fn build_metadata_array(records: &[SinkRecord]) -> ConnectorResult<ArrayRef> {
                 "offset": record.offset(),
                 "timestamp": record.publish_time(),
                 "timestamp_iso": Utc::now().to_rfc3339(),
-                "partition": record.partition.as_ref().map(|s| s.as_str()).unwrap_or("none"),
             });
             metadata.to_string()
         })
@@ -306,21 +218,36 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    #[test]
-    fn test_extract_string_field() {
-        let value = json!({"name": "Alice", "age": 30});
-        assert_eq!(
-            extract_string_field(&value, "name"),
-            Some("Alice".to_string())
-        );
-        assert_eq!(extract_string_field(&value, "missing"), None);
-    }
 
     #[test]
-    fn test_extract_int_field() {
-        let value = json!({"name": "Alice", "age": 30});
-        assert_eq!(extract_int_field(&value, "age"), Some(30));
-        assert_eq!(extract_int_field(&value, "missing"), None);
+    fn test_extract_value_by_path_parts_optimized() {
+        let value = json!({
+            "user": {
+                "profile": {
+                    "name": "Alice",
+                    "age": 30
+                }
+            },
+            "status": "active"
+        });
+
+        // Test nested path
+        let nested_parts = vec!["user".to_string(), "profile".to_string(), "name".to_string()];
+        assert_eq!(
+            extract_value_by_path_parts(&value, &nested_parts).and_then(|v| v.as_str()),
+            Some("Alice")
+        );
+
+        // Test simple path
+        let simple_parts = vec!["status".to_string()];
+        assert_eq!(
+            extract_value_by_path_parts(&value, &simple_parts).and_then(|v| v.as_str()),
+            Some("active")
+        );
+
+        // Test missing path
+        let missing_parts = vec!["user".to_string(), "profile".to_string(), "missing".to_string()];
+        assert_eq!(extract_value_by_path_parts(&value, &missing_parts), None);
     }
 
     #[test]
@@ -330,5 +257,53 @@ mod tests {
         assert!(matches!(parse_arrow_type("Float64"), Ok(DataType::Float64)));
         assert!(matches!(parse_arrow_type("Boolean"), Ok(DataType::Boolean)));
         assert!(parse_arrow_type("InvalidType").is_err());
+    }
+
+    #[test]
+    fn test_transform_payload_for_schema() {
+        use crate::config::FieldMapping;
+
+        let payload = json!({
+            "user": {
+                "name": "Alice",
+                "age": 30
+            },
+            "status": "active"
+        });
+
+        // Create field mappings and initialize path_parts
+        let mut field_mapping1 = FieldMapping {
+            json_path: "user.name".to_string(),
+            path_parts: vec![], // Will be initialized
+            column: "name".to_string(),
+            data_type: "Utf8".to_string(),
+            nullable: false,
+        };
+        field_mapping1.init_path_parts();
+
+        let mut field_mapping2 = FieldMapping {
+            json_path: "status".to_string(),
+            path_parts: vec![], // Will be initialized
+            column: "status".to_string(),
+            data_type: "Utf8".to_string(),
+            nullable: false,
+        };
+        field_mapping2.init_path_parts();
+
+        let mapping = TopicMapping {
+            topic: "/test".to_string(),
+            subscription: "test-sub".to_string(),
+            delta_table_path: "test-path".to_string(),
+            expected_schema_subject: None,
+            field_mappings: vec![field_mapping1, field_mapping2],
+            write_mode: crate::config::WriteMode::Append,
+            batch_size: None,
+            flush_interval_ms: None,
+            include_danube_metadata: false,
+        };
+
+        let transformed = transform_payload_for_schema(&payload, &mapping);
+        assert_eq!(transformed["name"].as_str(), Some("Alice"));
+        assert_eq!(transformed["status"].as_str(), Some("active"));
     }
 }

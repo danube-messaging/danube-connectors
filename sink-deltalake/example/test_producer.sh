@@ -108,12 +108,14 @@ EOF
 
 # Send messages using danube-cli with --count flag (creates ONE producer)
 echo "Sending ${COUNT} messages with ${INTERVAL}ms interval..."
+echo "Using schema validation: events-schema-v1"
 if ${DANUBE_CLI} produce \
     --service-addr "${DANUBE_URL}" \
     --topic "${TOPIC}" \
     --message "$message" \
     --count ${COUNT} \
     --interval ${INTERVAL} \
+    --schema-subject events-schema-v1 \
     --reliable; then
     success=${COUNT}
     failed=0
