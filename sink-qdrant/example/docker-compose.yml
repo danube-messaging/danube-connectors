@@ -1,0 +1,153 @@
+services:
+  # ETCD - Required for Danube broker metadata storage
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.9
+    container_name: danube-etcd
+    environment:
+      - ETCDCTL_API=3
+      - ETCD_NAME=qdrant-etcd
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_INITIAL_CLUSTER=qdrant-etcd=http://etcd:2380
+      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
+      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd:2380
+      - ETCD_INITIAL_CLUSTER_STATE=new
+      - ETCD_INITIAL_CLUSTER_TOKEN=qdrant-example-cluster
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+    networks:
+      - qdrant-network
+    volumes:
+      - etcd_data:/etcd-data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "etcdctl",
+          "--endpoints=http://127.0.0.1:2379",
+          "endpoint",
+          "health",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # Danube Broker
+  danube-broker:
+    image: ghcr.io/danube-messaging/danube-broker:latest
+    container_name: danube-broker
+    ports:
+      - "6650:6650" # Danube service port
+      - "50051:50051" # Admin API
+      - "9040:9040" # Prometheus metrics
+    environment:
+      - RUST_LOG=danube_broker=info,danube_core=info
+    volumes:
+      - ./danube_broker.yml:/etc/danube_broker.yml:ro
+      - broker_wal:/data/wal
+    depends_on:
+      etcd:
+        condition: service_healthy
+    networks:
+      - qdrant-network
+    command:
+      [
+        "--config-file",
+        "/etc/danube_broker.yml",
+        "--broker-addr",
+        "0.0.0.0:6650",
+        "--admin-addr",
+        "0.0.0.0:50051",
+        "--prom-exporter",
+        "0.0.0.0:9040",
+        "--advertised-addr",
+        "danube-broker:6650",
+      ]
+
+  # Topic Initialization - Creates Danube topics before connectors start
+  topic-init:
+    image: ghcr.io/danube-messaging/danube-cli:v0.5.2
+    container_name: qdrant-topic-init
+    depends_on:
+      danube-broker:
+        condition: service_started
+    environment:
+      - DANUBE_ADMIN_ENDPOINT=http://danube-broker:50051
+    networks:
+      - qdrant-network
+    command: >
+      sh -c "
+        echo 'Waiting for Danube broker to be ready...';
+        sleep 5;
+        echo 'Creating topic /default/vectors...';
+        danube-admin-cli topics create /default/vectors --dispatch-strategy reliable || echo 'Topic may already exist';
+        echo 'Topic initialization complete';
+      "
+    restart: "no"
+
+  # Qdrant Vector Database
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    ports:
+      - "6333:6333" # HTTP API
+      - "6334:6334" # gRPC API
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    networks:
+      - qdrant-network
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 5s bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # Qdrant Sink Connector
+  qdrant-sink:
+    build:
+      context: ../../
+      dockerfile: connectors/sink-qdrant/Dockerfile
+    container_name: qdrant-sink
+    depends_on:
+      topic-init:
+        condition: service_completed_successfully
+      qdrant:
+        condition: service_healthy
+    volumes:
+      # Mount the connector configuration file
+      - ./connector.toml:/etc/connector.toml:ro
+    environment:
+      # Configuration file path (required)
+      - CONNECTOR_CONFIG_PATH=/etc/connector.toml
+
+      # Core Danube settings (override values in connector.toml)
+      - DANUBE_SERVICE_URL=http://danube-broker:6650
+      - CONNECTOR_NAME=qdrant-sink-example
+
+      # Qdrant connection (override for different environments)
+      - QDRANT_URL=http://qdrant:6334
+
+      # Secrets (if using Qdrant Cloud, uncomment and set)
+      # - QDRANT_API_KEY=${QDRANT_API_KEY}
+
+      # Logging
+      - RUST_LOG=info,danube_sink_qdrant=debug
+    ports:
+      - "9090:9090" # Metrics
+    networks:
+      - qdrant-network
+    restart: unless-stopped
+
+networks:
+  qdrant-network:
+    driver: bridge
+
+volumes:
+  etcd_data:
+  broker_wal:
+  qdrant_storage:

@@ -1,0 +1,172 @@
+services:
+  # etcd - Required for Danube broker
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.9
+    container_name: danube-etcd
+    environment:
+      - ETCDCTL_API=3
+      - ETCD_NAME=mqtt-etcd
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_INITIAL_CLUSTER=mqtt-etcd=http://etcd:2380
+      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
+      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd:2380
+      - ETCD_INITIAL_CLUSTER_STATE=new
+      - ETCD_INITIAL_CLUSTER_TOKEN=mqtt-example-cluster
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+    networks:
+      - danube-mqtt-network
+    volumes:
+      - etcd_data:/etcd-data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "etcdctl",
+          "--endpoints=http://127.0.0.1:2379",
+          "endpoint",
+          "health",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # Danube Broker
+  danube-broker:
+    image: ghcr.io/danube-messaging/danube-broker:latest
+    container_name: danube-broker
+    ports:
+      - "6650:6650"
+      - "50051:50051" # Admin API
+      - "9040:9040" # Prometheus metrics
+    environment:
+      - RUST_LOG=danube_broker=info,danube_core=info
+    volumes:
+      - ./danube_broker.yml:/etc/danube_broker.yml:ro
+      - broker_wal:/data/wal
+    depends_on:
+      etcd:
+        condition: service_healthy
+    networks:
+      - danube-mqtt-network
+    command:
+      [
+        "--config-file",
+        "/etc/danube_broker.yml",
+        "--broker-addr",
+        "0.0.0.0:6650",
+        "--admin-addr",
+        "0.0.0.0:50051",
+        "--prom-exporter",
+        "0.0.0.0:9040",
+        "--advertised-addr",
+        "danube-broker:6650",
+      ]
+
+  # MQTT Broker (Eclipse Mosquitto)
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: mqtt-example-broker
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
+    networks:
+      - danube-mqtt-network
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "mosquitto_sub",
+          "-t",
+          "$$SYS/#",
+          "-C",
+          "1",
+          "-i",
+          "healthcheck",
+          "-W",
+          "3",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MQTT Source Connector
+  mqtt-connector:
+    build:
+      context: ../../
+      dockerfile: connectors/source-mqtt/Dockerfile
+    container_name: mqtt-example-connector
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+      danube-broker:
+        condition: service_started
+    volumes:
+      # Mount TOML configuration file
+      - ./connector.toml:/etc/connector.toml:ro
+    environment:
+      # Required: Path to configuration file
+      - CONNECTOR_CONFIG_PATH=/etc/connector.toml
+
+      # Optional: Core Danube overrides (for different environments)
+      - DANUBE_SERVICE_URL=http://danube-broker:6650
+      - CONNECTOR_NAME=mqtt-source-example
+
+      # Optional: MQTT connection overrides (for different environments)
+      # - MQTT_BROKER_HOST=production-mosquitto
+      # - MQTT_BROKER_PORT=1883
+      # - MQTT_CLIENT_ID=mqtt-prod-connector
+
+      # Optional: Secrets (should NOT be in TOML file)
+      # - MQTT_USERNAME=prod_user
+      # - MQTT_PASSWORD=secret123
+
+      # Logging configuration
+      - RUST_LOG=info,danube_source_mqtt=info
+    networks:
+      - danube-mqtt-network
+    restart: unless-stopped
+
+  # Test Publisher - Simulates IoT devices publishing to MQTT
+  mqtt-test-publisher:
+    image: eclipse-mosquitto:2
+    container_name: mqtt-example-publisher
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    networks:
+      - danube-mqtt-network
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        echo "Waiting for MQTT broker to be ready..."
+        sleep 5
+        echo "Starting to publish test messages..."
+        while true; do
+          temp=$$(shuf -i 10-40 -n 1)
+          humidity=$$(shuf -i 40-80 -n 1)
+          battery=$$(shuf -i 0-100 -n 1)
+          signal=$$(shuf -i 0-100 -n 1)
+          ts=$$(date +%s)
+          
+          /usr/bin/mosquitto_pub -h mosquitto -t sensors/temp/zone1 -m "{\"temperature\":$$temp,\"unit\":\"celsius\",\"timestamp\":$$ts}"
+          /usr/bin/mosquitto_pub -h mosquitto -t sensors/humidity/zone1 -m "{\"humidity\":$$humidity,\"unit\":\"percent\",\"timestamp\":$$ts}"
+          /usr/bin/mosquitto_pub -h mosquitto -t devices/device001/telemetry -m "{\"battery\":$$battery,\"signal\":$$signal,\"timestamp\":$$ts}"
+          
+          echo "[Publisher] Published 3 messages at $$(date +%T)"
+          sleep 5
+        done
+
+networks:
+  danube-mqtt-network:
+    driver: bridge
+
+volumes:
+  etcd_data:
+  broker_wal:

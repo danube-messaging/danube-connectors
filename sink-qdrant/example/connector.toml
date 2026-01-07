@@ -1,0 +1,74 @@
+# Qdrant Sink Connector Configuration Example
+
+# Danube Connection Settings
+danube_service_url = "http://localhost:6650"
+connector_name = "qdrant-sink-example"
+
+# Retry Configuration (optional)
+[retry]
+max_retries = 3
+retry_backoff_ms = 1000
+max_backoff_ms = 30000
+
+# Processing Settings (optional)
+[processing]
+batch_size = 100
+batch_timeout_ms = 1000
+poll_interval_ms = 100
+metrics_port = 9090
+log_level = "info"
+
+# Qdrant Configuration
+[qdrant]
+# Qdrant server URL (gRPC endpoint)
+url = "http://localhost:6334"
+
+# Optional API key for Qdrant Cloud
+# api_key = "your-api-key-here"
+
+# Global batch settings (can be overridden per topic)
+batch_size = 50
+batch_timeout_ms = 1000
+timeout_secs = 30
+
+# Topic Mapping: Danube topic → Qdrant collection
+# You can define multiple mappings to route different topics to different collections
+[[qdrant.topic_mappings]]
+# Danube topic to consume from
+topic = "/default/vectors"
+
+# Subscription name (for consumer group)
+subscription = "qdrant-sink-sub"
+
+# Subscription type: "Exclusive" (default), "Shared", "FailOver"
+subscription_type = "Exclusive"
+
+# Target Qdrant collection name
+collection_name = "vectors"
+
+# Vector dimension - REQUIRED for two reasons:
+# 1. Early Validation: Connector validates dimensions BEFORE sending to Qdrant
+#    - Catches bad data immediately with clear error messages
+#    - Skips invalid messages without crashing the pipeline
+# 2. Auto-Setup: Used to create collections with correct schema (if auto_create_collection=true)
+#
+# Common dimensions:
+# - 384: sentence-transformers/all-MiniLM-L6-v2
+# - 768: sentence-transformers/all-mpnet-base-v2
+# - 1536: OpenAI text-embedding-ada-002
+# - 3072: OpenAI text-embedding-3-large
+vector_dimension = 384
+
+# Distance metric - Used for auto-creating collections with correct similarity metric
+# Options: "Cosine" (default), "Euclid", "Dot", "Manhattan"
+distance = "Cosine"
+
+# Automatically create collection if it doesn't exist
+auto_create_collection = true
+
+# Include Danube metadata in payload (_danube_topic, _danube_offset, etc.)
+include_danube_metadata = true
+
+# Optional: Override global batch settings for this specific topic
+# batch_size = 100
+# batch_timeout_ms = 500

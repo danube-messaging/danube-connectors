@@ -1,0 +1,69 @@
+# SurrealDB Sink Connector Configuration Example
+
+# Danube Connection Settings
+danube_service_url = "http://localhost:6650"
+connector_name = "surrealdb-sink-example"
+
+# Retry Configuration (optional)
+[retry]
+max_retries = 3
+retry_backoff_ms = 1000
+max_backoff_ms = 30000
+
+# Processing Settings (optional)
+[processing]
+batch_size = 100
+batch_timeout_ms = 1000
+poll_interval_ms = 100
+metrics_port = 9090
+log_level = "info"
+
+# SurrealDB Configuration
+[surrealdb]
+# SurrealDB connection URL (host:port format for WebSocket)
+url = "localhost:8000"
+
+# SurrealDB namespace and database
+namespace = "default"
+database = "default"
+
+# Optional authentication (uncomment if needed)
+# username = "root"
+# password = "root"
+
+# Connection and request timeouts
+connection_timeout_secs = 30
+request_timeout_secs = 30
+
+# Global batch settings (can be overridden per topic)
+batch_size = 100
+flush_interval_ms = 3000
+
+# Topic Mapping: Danube topic → SurrealDB table
+# You can define multiple mappings to route different topics to different tables
+[[surrealdb.topic_mappings]]
+# Danube topic to consume from
+topic = "/default/events"
+
+# Subscription name (for consumer group)
+subscription = "surrealdb-sink-sub"
+
+# Target SurrealDB table name
+table_name = "events"
+
+# Schema type - must match Danube topic schema
+# Options: "Json", "String", "Int64", "Bytes"
+schema_type = "Json"
+
+# Storage mode: "Document" (default) or "TimeSeries"
+# Document: Regular document storage
+# TimeSeries: Adds _timestamp field using Danube publish_time for temporal queries
+storage_mode = "Document"
+
+# Include Danube metadata in each record
+# Adds _danube_metadata field with topic, offset, timestamp, message_id
+include_danube_metadata = true
+
+# Optional: Override global batch settings for this specific topic
+# batch_size = 50
+# flush_interval_ms = 500

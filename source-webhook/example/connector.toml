@@ -1,0 +1,79 @@
+# HTTP/Webhook Source Connector Configuration
+# Example configuration for receiving webhooks and publishing to Danube
+
+[core]
+# Danube broker service URL (overridden by DANUBE_SERVICE_URL env var)
+danube_service_url = "http://danube-broker:6650"
+
+# Unique connector name (overridden by CONNECTOR_NAME env var)
+connector_name = "webhook-source-example"
+
+# Metrics port for Prometheus (default: 9090)
+metrics_port = 9090
+
+[server]
+# Host to bind to (default: 0.0.0.0)
+host = "0.0.0.0"
+
+# Port to listen on (default: 8080)
+port = 8080
+
+# Request timeout in seconds (default: 30)
+timeout_seconds = 30
+
+# Maximum request body size in bytes (default: 1MB)
+max_body_size = 1048576
+
+# Platform-wide authentication (applies to ALL endpoints)
+[auth]
+# Authentication type: "none", "apikey", "hmac", or "jwt"
+# For this example, we use API Key authentication
+type = "apikey"
+
+# Environment variable containing the secret
+# For API Key: the API key value
+secret_env = "WEBHOOK_API_KEY"
+
+# Header name to check (for API Key)
+header = "x-api-key"
+
+# Optional platform-wide rate limiting
+[rate_limit]
+# Requests per second
+requests_per_second = 100
+
+# Burst size (max requests in burst)
+burst_size = 200
+
+# Enable per-IP rate limiting (default: false)
+per_ip_enabled = true
+
+# Per-IP requests per second (if per_ip_enabled)
+per_ip_requests_per_second = 10
+
+# Endpoint 1: Stripe payment webhooks (partitioned, reliable)
+[[endpoints]]
+path = "/webhooks/stripe/payments"
+danube_topic = "/stripe/payments"
+partitions = 4
+reliable_dispatch = true
+
+# Endpoint 2: GitHub push events (partitioned, non-reliable)
+[[endpoints]]
+path = "/webhooks/github/push"
+danube_topic = "/github/push"
+partitions = 2
+reliable_dispatch = false
+
+# Endpoint 3: Generic webhooks (non-partitioned, reliable)
+[[endpoints]]
+path = "/webhooks/generic"
+danube_topic = "/webhooks/generic"
+# partitions = 0  # Omitted = non-partitioned
+reliable_dispatch = true
+
+# Endpoint 4: Monitoring alerts (non-partitioned, non-reliable)
+[[endpoints]]
+path = "/webhooks/alerts"
+danube_topic = "/webhooks/alerts"
+reliable_dispatch = false

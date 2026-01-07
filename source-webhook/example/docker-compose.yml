@@ -1,0 +1,176 @@
+services:
+  # etcd - Required for Danube broker
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.9
+    container_name: danube-etcd
+    environment:
+      - ETCDCTL_API=3
+      - ETCD_NAME=webhook-etcd
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_INITIAL_CLUSTER=webhook-etcd=http://etcd:2380
+      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
+      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd:2380
+      - ETCD_INITIAL_CLUSTER_STATE=new
+      - ETCD_INITIAL_CLUSTER_TOKEN=webhook-example-cluster
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+    networks:
+      - danube-webhook-network
+    volumes:
+      - etcd_data:/etcd-data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "etcdctl",
+          "--endpoints=http://127.0.0.1:2379",
+          "endpoint",
+          "health",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # Danube Broker
+  danube-broker:
+    image: ghcr.io/danube-messaging/danube-broker:latest
+    container_name: danube-broker
+    ports:
+      - "6650:6650"
+      - "50051:50051" # Admin API
+      - "9040:9040" # Prometheus metrics
+    environment:
+      - RUST_LOG=danube_broker=info,danube_core=info
+    volumes:
+      - ./danube_broker.yml:/etc/danube_broker.yml:ro
+      - broker_wal:/data/wal
+    depends_on:
+      etcd:
+        condition: service_healthy
+    networks:
+      - danube-webhook-network
+    command:
+      [
+        "--config-file",
+        "/etc/danube_broker.yml",
+        "--broker-addr",
+        "0.0.0.0:6650",
+        "--admin-addr",
+        "0.0.0.0:50051",
+        "--prom-exporter",
+        "0.0.0.0:9040",
+        "--advertised-addr",
+        "danube-broker:6650",
+      ]
+
+  # Webhook Source Connector
+  webhook-connector:
+    build:
+      context: ../../
+      dockerfile: connectors/source-webhook/Dockerfile
+    container_name: webhook-example-connector
+    depends_on:
+      danube-broker:
+        condition: service_started
+    ports:
+      - "8080:8080" # Webhook HTTP server
+    volumes:
+      # Mount TOML configuration file
+      - ./connector.toml:/etc/connector.toml:ro
+    environment:
+      # Required: Path to configuration file
+      - CONNECTOR_CONFIG_PATH=/etc/connector.toml
+
+      # Optional: Core Danube overrides (for different environments)
+      - DANUBE_SERVICE_URL=http://danube-broker:6650
+      - CONNECTOR_NAME=webhook-source-example
+
+      # Required: API Key for authentication (matches config auth.type = "apikey")
+      - WEBHOOK_API_KEY=test-api-key-12345
+
+      # Optional: For HMAC authentication (if using auth.type = "hmac")
+      # - WEBHOOK_HMAC_SECRET=your-hmac-secret
+
+      # Optional: For JWT authentication (if using auth.type = "jwt")
+      # - WEBHOOK_JWT_SECRET=your-jwt-secret
+
+      # Logging configuration
+      - RUST_LOG=info,danube_source_webhook=debug
+    networks:
+      - danube-webhook-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Test Webhook Publisher - Simulates external services sending webhooks
+  webhook-test-publisher:
+    image: curlimages/curl:latest
+    container_name: webhook-example-publisher
+    depends_on:
+      webhook-connector:
+        condition: service_healthy
+    networks:
+      - danube-webhook-network
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        echo "Waiting for webhook connector to be ready..."
+        sleep 5
+        echo "Starting to send test webhooks..."
+
+        count=0
+        while true; do
+          count=$$((count + 1))
+          timestamp=$$(date +%s)
+          
+          # Stripe payment webhook
+          amount=$$((RANDOM % 10000 + 1000))
+          curl -X POST http://webhook-connector:8080/webhooks/stripe/payments \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: test-api-key-12345" \
+            -d "{\"event\":\"payment.succeeded\",\"amount\":$$amount,\"currency\":\"usd\",\"timestamp\":$$timestamp}" \
+            -s -o /dev/null -w "Stripe Payment: %{http_code}\n"
+          
+          # GitHub push webhook
+          commits=$$((RANDOM % 5 + 1))
+          curl -X POST http://webhook-connector:8080/webhooks/github/push \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: test-api-key-12345" \
+            -d "{\"event\":\"push\",\"repository\":\"danube-connect\",\"commits\":$$commits,\"timestamp\":$$timestamp}" \
+            -s -o /dev/null -w "GitHub Push: %{http_code}\n"
+          
+          # Generic webhook
+          curl -X POST http://webhook-connector:8080/webhooks/generic \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: test-api-key-12345" \
+            -d "{\"event\":\"custom.event\",\"data\":\"test-$$count\",\"timestamp\":$$timestamp}" \
+            -s -o /dev/null -w "Generic: %{http_code}\n"
+          
+          # Alert webhook
+          severity=$$((RANDOM % 3 + 1))
+          curl -X POST http://webhook-connector:8080/webhooks/alerts \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: test-api-key-12345" \
+            -d "{\"event\":\"alert.triggered\",\"severity\":$$severity,\"message\":\"Test alert $$count\",\"timestamp\":$$timestamp}" \
+            -s -o /dev/null -w "Alert: %{http_code}\n"
+          
+          echo "[Publisher] Batch #$$count completed at $$(date +%T)"
+          echo "---"
+          sleep 5
+        done
+
+networks:
+  danube-webhook-network:
+    driver: bridge
+
+volumes:
+  etcd_data:
+  broker_wal:

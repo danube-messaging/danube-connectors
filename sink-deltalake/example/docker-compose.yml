@@ -1,0 +1,172 @@
+services:
+  # ETCD - Required for Danube broker metadata storage
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.9
+    container_name: danube-etcd
+    environment:
+      - ETCDCTL_API=3
+      - ETCD_NAME=deltalake-etcd
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_INITIAL_CLUSTER=deltalake-etcd=http://etcd:2380
+      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
+      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd:2380
+      - ETCD_INITIAL_CLUSTER_STATE=new
+      - ETCD_INITIAL_CLUSTER_TOKEN=deltalake-example-cluster
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+    networks:
+      - deltalake-network
+    volumes:
+      - etcd_data:/etcd-data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "etcdctl",
+          "--endpoints=http://127.0.0.1:2379",
+          "endpoint",
+          "health",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # Danube Broker
+  danube-broker:
+    image: ghcr.io/danube-messaging/danube-broker:latest
+    container_name: danube-broker
+    ports:
+      - "6650:6650" # Danube service port
+      - "50051:50051" # Admin API
+      - "9040:9040" # Prometheus metrics
+    environment:
+      - RUST_LOG=danube_broker=info,danube_core=info
+    volumes:
+      - ./danube_broker.yml:/etc/danube_broker.yml:ro
+      - broker_wal:/data/wal
+    depends_on:
+      etcd:
+        condition: service_healthy
+    networks:
+      - deltalake-network
+    command:
+      [
+        "--config-file",
+        "/etc/danube_broker.yml",
+        "--broker-addr",
+        "0.0.0.0:6650",
+        "--admin-addr",
+        "0.0.0.0:50051",
+        "--prom-exporter",
+        "0.0.0.0:9040",
+        "--advertised-addr",
+        "danube-broker:6650",
+      ]
+
+  # Topic Initialization - Creates Danube topics before connectors start
+  topic-init:
+    image: ghcr.io/danube-messaging/danube-cli:v0.5.2
+    container_name: deltalake-topic-init
+    depends_on:
+      danube-broker:
+        condition: service_started
+    environment:
+      - DANUBE_ADMIN_ENDPOINT=http://danube-broker:50051
+    networks:
+      - deltalake-network
+    command: >
+      sh -c "
+        echo 'Waiting for Danube broker to be ready...';
+        sleep 5;
+        echo 'Creating topic /default/events...';
+        danube-admin-cli topics create /default/events --dispatch-strategy reliable || echo 'Topic may already exist';
+        echo 'Topic initialization complete';
+      "
+    restart: "no"
+
+  # MinIO - S3-compatible object storage
+  minio:
+    image: quay.io/minio/minio:latest
+    container_name: minio
+    ports:
+      - "9000:9000" # API
+      - "9001:9001" # Console
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    command: server /data --console-address ":9001"
+    networks:
+      - deltalake-network
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # MinIO Client - Create bucket on startup
+  minio-init:
+    image: quay.io/minio/mc:latest
+    container_name: minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - deltalake-network
+    entrypoint: >
+      sh -c "
+        mc alias set myminio http://minio:9000 minioadmin minioadmin;
+        mc mb myminio/delta-tables --ignore-existing;
+        echo 'MinIO bucket created: delta-tables';
+      "
+    restart: "no"
+
+  # Delta Lake Sink Connector
+  deltalake-sink:
+    build:
+      context: ../../
+      dockerfile: connectors/sink-deltalake/Dockerfile
+    container_name: deltalake-sink
+    depends_on:
+      topic-init:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+    volumes:
+      # Mount the connector configuration file
+      - ./connector.toml:/etc/connector.toml:ro
+    environment:
+      # Configuration file path (required)
+      - CONNECTOR_CONFIG_PATH=/etc/connector.toml
+
+      # Core Danube settings (override values in connector.toml)
+      - DANUBE_SERVICE_URL=http://danube-broker:6650
+      - CONNECTOR_NAME=deltalake-sink-example
+
+      # MinIO/S3 credentials (secrets)
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+
+      # S3 endpoint override for MinIO
+      - S3_ENDPOINT=http://minio:9000
+
+      # Logging
+      - RUST_LOG=info,danube_sink_deltalake=debug
+    ports:
+      - "9090:9090" # Metrics
+    networks:
+      - deltalake-network
+    restart: unless-stopped
+
+networks:
+  deltalake-network:
+    driver: bridge
+
+volumes:
+  etcd_data:
+  broker_wal:
+  minio_data:

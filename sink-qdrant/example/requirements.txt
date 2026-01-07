@@ -1,0 +1,7 @@
+# Python dependencies for Qdrant Sink Connector examples
+
+# Embedding generation (optional - can use random vectors)
+sentence-transformers>=2.2.0
+
+# Qdrant client for search script
+qdrant-client>=1.7.0

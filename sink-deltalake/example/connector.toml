@@ -1,0 +1,84 @@
+# Delta Lake Sink Connector Configuration Example
+
+# Danube Connection Settings
+danube_service_url = "http://localhost:6650"
+connector_name = "deltalake-sink-example"
+
+# Retry Configuration (optional)
+[retry]
+max_retries = 3
+retry_backoff_ms = 1000
+max_backoff_ms = 30000
+
+# Processing Settings (optional)
+[processing]
+batch_size = 100
+batch_timeout_ms = 1000
+poll_interval_ms = 100
+metrics_port = 9090
+log_level = "info"
+
+# Delta Lake Configuration
+[deltalake]
+# Storage backend: "s3", "azure", or "gcs"
+storage_backend = "s3"
+
+# S3/MinIO Configuration
+s3_region = "us-east-1"
+s3_endpoint = "http://localhost:9000"  # MinIO endpoint
+s3_allow_http = true  # Required for MinIO
+
+# AWS credentials from environment variables:
+# AWS_ACCESS_KEY_ID
+# AWS_SECRET_ACCESS_KEY
+
+# Global batch settings (can be overridden per topic)
+batch_size = 100  # High batch size - rely on flush interval
+flush_interval_ms = 3000  # Flush every 3 seconds if batch not full
+
+# Topic Mapping: Danube topic → Delta Lake table
+[[deltalake.topic_mappings]]
+# Danube topic to consume from
+topic = "/default/events"
+
+# Subscription name (for consumer group)
+subscription = "deltalake-sink-sub"
+
+# Delta table path (S3 URI format)
+delta_table_path = "s3://delta-tables/events"
+
+# Schema type - must match Danube topic schema
+# Options: "Json", "String", "Int64", "Bytes"
+schema_type = "Json"
+
+# Write mode: "append" (default) or "overwrite"
+write_mode = "append"
+
+# Include Danube metadata in each record
+# Adds _danube_metadata JSON column with topic, offset, timestamp
+include_danube_metadata = true
+
+# Define table schema (compact inline format)
+# This defines the Arrow schema for the Delta Lake table
+schema = [
+    { name = "event_type", data_type = "Utf8", nullable = false },
+    { name = "user_id", data_type = "Utf8", nullable = false },
+    { name = "timestamp", data_type = "Utf8", nullable = false },
+    { name = "product", data_type = "Utf8", nullable = true },
+    { name = "amount", data_type = "Int64", nullable = true },
+    { name = "currency", data_type = "Utf8", nullable = true },
+    { name = "email", data_type = "Utf8", nullable = true },
+    { name = "source", data_type = "Utf8", nullable = true },
+    { name = "ip_address", data_type = "Utf8", nullable = true },
+    { name = "device", data_type = "Utf8", nullable = true },
+    { name = "page", data_type = "Utf8", nullable = true },
+    { name = "duration_ms", data_type = "Int64", nullable = true },
+    { name = "endpoint", data_type = "Utf8", nullable = true },
+    { name = "method", data_type = "Utf8", nullable = true },
+    { name = "status_code", data_type = "Int32", nullable = true },
+    { name = "response_time_ms", data_type = "Int64", nullable = true },
+]
+
+# Optional: Override global batch settings for this specific topic
+# batch_size = 50
+# flush_interval_ms = 500
