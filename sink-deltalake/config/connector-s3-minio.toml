@@ -1,0 +1,71 @@
+# Delta Lake Sink Connector - S3/MinIO Configuration Example
+#
+# This example shows how to stream events from Danube to Delta Lake tables
+# stored in S3 or MinIO (S3-compatible storage).
+
+connector_name = "deltalake-sink-s3"
+danube_service_url = "http://localhost:6650"
+
+[deltalake]
+# Storage backend
+storage_backend = "s3"
+
+# S3 Configuration
+s3_region = "us-east-1"
+
+# MinIO endpoint (comment out for real AWS S3)
+s3_endpoint = "http://localhost:9000"
+s3_allow_http = true
+
+# AWS credentials from environment:
+# - AWS_ACCESS_KEY_ID
+# - AWS_SECRET_ACCESS_KEY
+
+# Global batch settings (can be overridden per topic)
+batch_size = 100           # Flush after 100 messages
+flush_interval_ms = 3000    # OR flush after 3 seconds (whichever comes first)
+
+#######################
+# Payment Events Topic
+#######################
+[[deltalake.topic_mappings]]
+topic = "/events/payments"
+subscription = "deltalake-payments"
+delta_table_path = "s3://my-bucket/tables/payments"
+schema_type = "Json"
+write_mode = "append"
+include_danube_metadata = true
+
+# Define table schema (compact inline format)
+schema = [
+    { name = "payment_id", data_type = "Utf8", nullable = false },
+    { name = "user_id", data_type = "Utf8", nullable = false },
+    { name = "amount", data_type = "Float64", nullable = false },
+    { name = "currency", data_type = "Utf8", nullable = false },
+    { name = "status", data_type = "Utf8", nullable = false },
+    { name = "created_at", data_type = "Timestamp", nullable = false },
+]
+
+#######################
+# User Events Topic
+#######################
+[[deltalake.topic_mappings]]
+topic = "/events/users"
+subscription = "deltalake-users"
+delta_table_path = "s3://my-bucket/tables/users"
+schema_type = "Json"
+write_mode = "append"
+include_danube_metadata = false
+
+# Higher batch size for high-volume topic
+batch_size = 2000
+
+# Define table schema (compact inline format)
+schema = [
+    { name = "user_id", data_type = "Utf8", nullable = false },
+    { name = "email", data_type = "Utf8", nullable = false },
+    { name = "name", data_type = "Utf8", nullable = true },
+    { name = "age", data_type = "Int32", nullable = true },
+    { name = "is_active", data_type = "Boolean", nullable = false },
+    { name = "signup_date", data_type = "Timestamp", nullable = false },
+]

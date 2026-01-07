@@ -1,0 +1,47 @@
+[package]
+name = "danube-sink-surrealdb"
+version = "0.1.4"
+edition = "2021"
+rust-version = "1.75"
+authors = ["Danube Connect Contributors"]
+description = "SurrealDB Sink Connector for Danube Connect - Stream events into SurrealDB"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/danrusei/danube-connect"
+keywords = ["danube", "surrealdb", "streaming", "connector", "database"]
+categories = ["database", "network-programming"]
+
+[dependencies]
+# Danube integration
+danube-connect-core = "0.3.2"
+
+# SurrealDB client (connector-specific)
+surrealdb = { version = "2.4", features = ["protocol-ws", "protocol-http"] }
+
+# Async Runtime
+tokio = { version = "1.48", features = ["full"] }
+async-trait = "0.1.89"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Logging
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+
+# Error Handling
+thiserror = "1.0.69"
+anyhow = "1.0"
+
+# Utilities
+chrono = "0.4"
+base64 = "0.22"
+
+[dev-dependencies]
+tokio-test = "0.4"
+danube-core = "0.6.1"
+
+[[bin]]
+name = "danube-sink-surrealdb"
+path = "src/main.rs"

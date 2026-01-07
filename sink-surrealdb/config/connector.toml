@@ -1,0 +1,104 @@
+# SurrealDB Sink Connector Configuration
+# 
+# This file defines how the connector streams messages from Danube topics
+# to SurrealDB tables. It supports single-topic or multi-topic configurations.
+
+#######################
+# Core Configuration
+#######################
+
+# Connector name (appears in logs and metrics)
+connector_name = "surrealdb-sink"
+
+# Danube broker service URL
+danube_service_url = "http://localhost:6650"
+
+# Metrics server port for Prometheus scraping
+metrics_port = 9090
+
+#######################
+# SurrealDB Configuration
+#######################
+
+[surrealdb]
+
+# SurrealDB connection URL
+# Supported protocols: ws:// (WebSocket), http:// (HTTP)
+# WebSocket is recommended for better performance
+url = "ws://localhost:8000"
+
+# SurrealDB namespace (isolated environment)
+namespace = "default"
+
+# SurrealDB database within the namespace
+database = "default"
+
+# Optional authentication credentials
+# If not provided, assumes no authentication required
+# username = "root"
+# password = "root"
+
+# Connection timeout in seconds (default: 30)
+connection_timeout_secs = 30
+
+# Request timeout in seconds (default: 30)
+request_timeout_secs = 30
+
+# Global batch size - number of records to buffer before flushing
+# This can be overridden per topic mapping
+batch_size = 100
+
+# Global flush interval in milliseconds
+# Batches are flushed when either batch_size or this interval is reached
+flush_interval_ms = 1000
+
+#######################
+# Topic Mappings
+#######################
+# Each mapping defines how a Danube topic streams to a SurrealDB table
+
+[[surrealdb.topic_mappings]]
+# Danube topic to consume from
+topic = "/default/events"
+
+# Subscription name for this consumer
+subscription = "surrealdb-sink"
+
+# SurrealDB table name to insert records into
+# The table will be created automatically if it doesn't exist
+table_name = "events"
+
+# Schema type for this topic (must match Danube topic schema)
+# Supported: "Json", "String", "Int64", "Bytes"
+# This determines how the connector interprets and inserts the payload
+schema_type = "Json"
+
+# Storage mode: "Document" (default) or "TimeSeries"
+# Document: Regular document storage
+# TimeSeries: Adds _timestamp field using Danube publish_time
+storage_mode = "Document"
+
+# Include Danube metadata in each record (default: true)
+# Adds _danube_metadata field with topic, offset, timestamp, message_id
+include_danube_metadata = true
+
+# Optional: Override batch size for this specific topic
+# batch_size = 50
+
+# Optional: Override flush interval for this specific topic
+# flush_interval_ms = 500
+
+#######################
+# Example: Time-Series Data
+#######################
+# Uncomment to add a time-series topic mapping
+
+# [[surrealdb.topic_mappings]]
+# topic = "/iot/temperature"
+# subscription = "surrealdb-iot"
+# table_name = "temperature_readings"
+# schema_type = "Json"
+# storage_mode = "TimeSeries"  # Uses Danube publish_time as timestamp
+# include_danube_metadata = false
+# batch_size = 500
+# flush_interval_ms = 2000

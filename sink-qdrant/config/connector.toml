@@ -1,0 +1,191 @@
+# Qdrant Sink Connector - Single Topic Configuration
+#
+# This is a reference configuration file showing all available options.
+# Copy and customize this file for your deployment.
+
+# ============================================================================
+# CORE DANUBE CONNECT CONFIGURATION
+# ============================================================================
+
+# Connector identity
+connector_name = "qdrant-sink-1"
+
+# Danube broker service URL (gRPC endpoint)
+danube_service_url = "http://localhost:6650"
+
+# Retry Configuration (optional)
+[retry]
+# Maximum number of retry attempts for failed operations
+max_retries = 3
+
+# Initial backoff duration in milliseconds
+retry_backoff_ms = 1000
+
+# Maximum backoff duration in milliseconds
+max_backoff_ms = 30000
+
+# Processing Settings (optional)
+[processing]
+# Batch size for processing records
+batch_size = 100
+
+# Batch timeout in milliseconds
+batch_timeout_ms = 1000
+
+# Poll interval for checking new messages (milliseconds)
+poll_interval_ms = 100
+
+# Prometheus metrics port
+metrics_port = 9090
+
+# Log level: "error", "warn", "info", "debug", "trace"
+log_level = "info"
+
+# ============================================================================
+# QDRANT SINK CONNECTOR CONFIGURATION
+# ============================================================================
+
+[qdrant]
+# Qdrant server URL (gRPC endpoint, not HTTP)
+# - Local: http://localhost:6334
+# - Docker: http://qdrant:6334
+url = "http://localhost:6334"
+
+# Qdrant Cloud API key (optional)
+# Required only for Qdrant Cloud deployments
+# api_key = "your-qdrant-cloud-api-key"
+
+# Global batch settings - apply to all topics unless overridden
+# Batch size: number of points to accumulate before flushing
+batch_size = 50
+
+# Batch timeout: maximum time (ms) to wait before flushing
+batch_timeout_ms = 1000
+
+# Timeout for Qdrant operations (seconds)
+timeout_secs = 30
+
+# ============================================================================
+# TOPIC MAPPING: Danube Topic → Qdrant Collection
+# ============================================================================
+
+[[qdrant.topic_mappings]]
+# Danube topic to consume from
+# Format: /{namespace}/{topic_name} (exactly 2 segments)
+# Examples: /default/vectors, /production/embeddings, /chat/messages
+topic = "/default/vectors"
+
+# Subscription name for consumer group
+# Use different subscriptions to create multiple independent consumers
+subscription = "qdrant-sink-sub"
+
+# Subscription type:
+# - "Exclusive": Only one consumer can subscribe (default)
+# - "Shared": Multiple consumers share the load
+# - "FailOver": Active-passive failover setup
+subscription_type = "Exclusive"
+
+# Target Qdrant collection name
+collection_name = "vectors"
+
+# Vector dimension - REQUIRED for two critical reasons:
+# 1. Early Validation: Validates vector dimensions BEFORE sending to Qdrant
+#    - Catches bad data immediately with clear error messages
+#    - Skips invalid messages without crashing the pipeline
+#    - Avoids network round-trip for invalid data
+# 2. Auto-Collection Creation: Used to create collection schema if it doesn't exist
+#    - Qdrant collections require dimension at creation time (cannot change later)
+#
+# Common embedding dimensions:
+# - 384:  sentence-transformers/all-MiniLM-L6-v2
+# - 768:  sentence-transformers/all-mpnet-base-v2
+# - 1024: Cohere embed-english-v3.0
+# - 1536: OpenAI text-embedding-ada-002, text-embedding-3-small
+# - 3072: OpenAI text-embedding-3-large
+vector_dimension = 384
+
+# Distance metric for similarity search
+# Used when auto-creating collections
+# Options:
+# - "Cosine":    Best for normalized vectors (most common, default)
+# - "Euclid":    Euclidean distance for absolute positioning
+# - "Dot":       Dot product similarity
+# - "Manhattan": L1 distance for sparse vectors
+distance = "Cosine"
+
+# Automatically create collection if it doesn't exist
+# If false, collection must exist before connector starts
+auto_create_collection = true
+
+# Include Danube metadata in Qdrant payload
+# Adds these fields to each point:
+# - _danube_topic: Source topic name
+# - _danube_offset: Message offset
+# - _danube_timestamp: Publish timestamp (microseconds)
+# - _danube_producer: Producer name
+# - _danube_attr_*: Custom message attributes
+#
+# Benefits:
+# - Message traceability and debugging
+# - Temporal filtering in queries
+# - Multi-tenant isolation
+# - Source tracking for mixed pipelines
+include_danube_metadata = true
+
+# Per-topic batch overrides (optional)
+# Uncomment to override global batch_size and batch_timeout_ms for this topic
+# batch_size = 100
+# batch_timeout_ms = 500
+
+# ============================================================================
+# USAGE & ENVIRONMENT VARIABLES
+# ============================================================================
+#
+# Running the Connector:
+#   CONNECTOR_CONFIG_PATH=/path/to/connector.toml danube-sink-qdrant
+#
+# Environment Variable Overrides:
+# Only secrets and connection URLs can be overridden with environment variables.
+# All structural configuration (topic mappings, dimensions, batch sizes, etc.)
+# must be in this TOML file.
+#
+# Supported Environment Variables:
+#   CONNECTOR_CONFIG_PATH=/etc/connector.toml  # Required: path to this file
+#   DANUBE_SERVICE_URL=http://broker:6650     # Optional: override broker URL
+#   CONNECTOR_NAME=qdrant-sink-prod           # Optional: override connector name
+#   QDRANT_URL=http://qdrant:6334             # Optional: override Qdrant URL
+#   QDRANT_API_KEY=your-api-key               # Optional: secret (don't put in TOML)
+#
+# NOT Supported via Environment Variables:
+#   - Topic mappings (must be in TOML)
+#   - Collection names, dimensions, distance metrics (must be in TOML)
+#   - Batch sizes and timeouts (must be in TOML)
+#   - Retry settings (must be in TOML)
+#   - Processing settings (must be in TOML)
+#
+# Multi-Topic Configuration:
+# To route multiple Danube topics to different Qdrant collections,
+# add additional [[qdrant.topic_mappings]] sections.
+# See connector-multi-topic.toml for examples.
+#
+# Message Format:
+# The connector expects JSON messages with this structure:
+# {
+#   "id": "optional-point-id",
+#   "vector": [0.1, 0.2, 0.3, ...],
+#   "payload": {
+#     "text": "Original content",
+#     "metadata": "any JSON value"
+#   }
+# }
+#
+# Docker Deployment Example:
+#   docker run -v ./connector.toml:/etc/connector.toml:ro \
+#     -e CONNECTOR_CONFIG_PATH=/etc/connector.toml \
+#     -e DANUBE_SERVICE_URL=http://danube-broker:6650 \
+#     -e QDRANT_URL=http://qdrant:6334 \
+#     -e QDRANT_API_KEY=${QDRANT_API_KEY} \
+#     danube-sink-qdrant
+#
+# Documentation:
+# See config/README.md for detailed configuration guide

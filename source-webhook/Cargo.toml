@@ -1,0 +1,64 @@
+[package]
+name = "danube-source-webhook"
+version = "0.1.4"
+edition = "2021"
+authors = ["Danube Connect Contributors"]
+description = "HTTP/Webhook source connector for Danube messaging platform"
+license = "Apache-2.0"
+repository = "https://github.com/danrusei/danube-connect"
+
+[[bin]]
+name = "danube-source-webhook"
+path = "src/main.rs"
+
+[dependencies]
+# Danube integration
+danube-connect-core = "0.3.2"
+danube-client = "0.6.1"
+
+# Async Runtime
+async-trait = "0.1.89"
+tokio = { version = "1.48", features = ["full"] }
+
+# HTTP framework
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors", "timeout"] }
+hyper = "1.8"
+
+# Authentication & Security
+hmac = "0.12"
+sha2 = "0.10"
+jsonwebtoken = { version = "10.2", features = ["rust_crypto"] }
+base64 = "0.22"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Rate limiting
+tower_governor = "0.8"
+governor = "0.10"
+
+# Schema validation (optional feature, connector-specific)
+jsonschema = { version = "0.17", optional = true }
+
+# Logging
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+
+# Error Handling
+anyhow = "1.0"
+thiserror = "1.0.69"
+
+# Utilities
+chrono = "0.4"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+
+[features]
+default = ["schema-validation"]
+schema-validation = ["jsonschema"]
+
+[dev-dependencies]
+reqwest = { version = "0.11", features = ["json"] }

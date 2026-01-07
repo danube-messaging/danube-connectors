@@ -1,0 +1,51 @@
+[package]
+name = "danube-sink-deltalake"
+version = "0.1.4"
+edition = "2021"
+rust-version = "1.75"
+authors = ["Danube Connect Contributors"]
+description = "Delta Lake Sink Connector for Danube Connect - Stream events into Delta Lake tables"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/danrusei/danube-connect"
+keywords = ["danube", "deltalake", "streaming", "connector", "datalake"]
+categories = ["database", "network-programming"]
+
+[dependencies]
+# Danube integration
+danube-connect-core = "0.3.2"
+
+# Delta Lake (connector-specific) - All cloud providers enabled
+# Note: datafusion feature NOT needed for basic append/overwrite operations
+deltalake = { version = "0.29", features = ["s3", "azure", "gcs"] }
+
+# Arrow ecosystem (must match deltalake's arrow version - 56.2 for deltalake 0.29)
+arrow = "56.2"
+
+# Async Runtime
+tokio = { version = "1.48", features = ["full"] }
+async-trait = "0.1.89"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Logging
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+
+# Error Handling
+thiserror = "1.0.69"
+anyhow = "1.0"
+
+# Utilities
+chrono = "0.4"
+url = "2.5"
+
+[dev-dependencies]
+tokio-test = "0.4"
+danube-core = "0.6.1"
+
+[[bin]]
+name = "danube-sink-deltalake"
+path = "src/main.rs"

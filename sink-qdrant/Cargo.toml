@@ -1,0 +1,38 @@
+[package]
+name = "danube-sink-qdrant"
+version = "0.1.4"
+edition = "2021"
+authors = ["Dan Rusei <dan.rusei@gmail.com>"]
+description = "Qdrant sink connector for Danube Connect - streaming vector embeddings to Qdrant"
+license = "Apache-2.0"
+repository = "https://github.com/danube-messaging/danube-connect"
+
+[dependencies]
+# Danube integration
+danube-connect-core = "0.3.2"
+
+# Qdrant client (connector-specific)
+qdrant-client = "1.14.1"
+
+# Async Runtime
+tokio = { version = "1.48", features = ["full"] }
+async-trait = "0.1.89"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Logging
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+
+# Utilities
+sha2 = "0.10"
+
+[dev-dependencies]
+danube-core = "0.6.1"
+
+[[bin]]
+name = "danube-sink-qdrant"
+path = "src/main.rs"

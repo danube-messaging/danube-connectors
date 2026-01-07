@@ -1,0 +1,42 @@
+# Delta Lake Sink Connector - Azure Blob Storage Configuration Example
+#
+# This example shows how to stream events from Danube to Delta Lake tables
+# stored in Azure Blob Storage.
+
+connector_name = "deltalake-sink-azure"
+danube_service_url = "http://localhost:6650"
+
+[deltalake]
+# Storage backend
+storage_backend = "azure"
+
+# Azure Configuration
+azure_storage_account = "mystorageaccount"
+azure_container = "delta-tables"
+
+# Azure credentials from environment:
+# - AZURE_STORAGE_ACCOUNT_KEY or AZURE_STORAGE_SAS_TOKEN
+
+# Global batch settings (can be overridden per topic)
+batch_size = 100           # Flush after 100 messages
+flush_interval_ms = 3000    # OR flush after 3 seconds (whichever comes first)
+
+#######################
+# IoT Sensor Data Topic
+#######################
+[[deltalake.topic_mappings]]
+topic = "/iot/sensors"
+subscription = "deltalake-sensors"
+delta_table_path = "abfss://delta-tables@mystorageaccount.dfs.core.windows.net/sensors"
+schema_type = "Json"
+write_mode = "append"
+include_danube_metadata = true
+
+# Define table schema (compact inline format)
+schema = [
+    { name = "sensor_id", data_type = "Utf8", nullable = false },
+    { name = "temperature", data_type = "Float64", nullable = false },
+    { name = "humidity", data_type = "Float64", nullable = false },
+    { name = "pressure", data_type = "Float64", nullable = true },
+    { name = "timestamp", data_type = "Timestamp", nullable = false },
+]

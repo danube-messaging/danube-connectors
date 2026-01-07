@@ -1,0 +1,196 @@
+# Qdrant Sink Connector - Multi-Topic Configuration
+#
+# This example demonstrates routing multiple Danube topics to different 
+# Qdrant collections with independent configurations.
+#
+# Use Case: RAG pipeline with multiple data sources
+# - Chat messages → chat_vectors (384 dims, frequent updates)
+# - Wiki articles → wiki_knowledge (768 dims, comprehensive)
+# - Code snippets → code_search (1536 dims, large batches)
+# - Images → visual_search (512 dims, different metric)
+
+# ============================================================================
+# CORE CONFIGURATION
+# ============================================================================
+
+connector_name = "qdrant-sink-multi"
+danube_service_url = "http://localhost:6650"
+
+[retry]
+max_retries = 3
+retry_backoff_ms = 1000
+max_backoff_ms = 30000
+
+[processing]
+batch_size = 100
+batch_timeout_ms = 1000
+poll_interval_ms = 100
+metrics_port = 9090
+log_level = "info"
+
+# ============================================================================
+# QDRANT CONFIGURATION
+# ============================================================================
+
+[qdrant]
+url = "http://localhost:6334"
+# api_key = "your-qdrant-cloud-api-key"
+
+# Global defaults (can be overridden per topic)
+batch_size = 50
+batch_timeout_ms = 1000
+timeout_secs = 30
+
+# ============================================================================
+# TOPIC MAPPING 1: Chat Embeddings
+# ============================================================================
+# Use case: Real-time chat support messages
+# Model: sentence-transformers/all-MiniLM-L6-v2 (384 dimensions)
+# Strategy: Small batches for low latency
+
+[[qdrant.topic_mappings]]
+topic = "/default/chat_embeddings"
+subscription = "qdrant-chat-sub"
+subscription_type = "Exclusive"
+collection_name = "chat_vectors"
+vector_dimension = 384
+distance = "Cosine"
+auto_create_collection = true
+include_danube_metadata = true
+# Small batches for real-time updates
+batch_size = 25
+batch_timeout_ms = 500
+
+# ============================================================================
+# TOPIC MAPPING 2: Wiki Knowledge Base
+# ============================================================================
+# Use case: Comprehensive wiki articles for knowledge retrieval
+# Model: sentence-transformers/all-mpnet-base-v2 (768 dimensions)
+# Strategy: Balanced batching
+
+[[qdrant.topic_mappings]]
+topic = "/default/wiki_embeddings"
+subscription = "qdrant-wiki-sub"
+subscription_type = "Exclusive"
+collection_name = "wiki_knowledge"
+vector_dimension = 768
+distance = "Cosine"
+auto_create_collection = true
+include_danube_metadata = true
+# Use global batch settings (50 points, 1000ms)
+
+# ============================================================================
+# TOPIC MAPPING 3: Code Search
+# ============================================================================
+# Use case: Code snippets and documentation search
+# Model: OpenAI text-embedding-ada-002 (1536 dimensions)
+# Strategy: Large batches for throughput
+
+[[qdrant.topic_mappings]]
+topic = "/default/code_embeddings"
+subscription = "qdrant-code-sub"
+subscription_type = "Exclusive"
+collection_name = "code_search"
+vector_dimension = 1536
+distance = "Cosine"
+auto_create_collection = true
+# Exclude metadata to save space on high-volume code data
+include_danube_metadata = false
+# Large batches for maximum throughput
+batch_size = 200
+batch_timeout_ms = 2000
+
+# ============================================================================
+# TOPIC MAPPING 4: Visual Search (Images)
+# ============================================================================
+# Use case: Image similarity search
+# Model: CLIP or similar visual embedding model (512 dimensions)
+# Strategy: Different distance metric for visual data
+
+[[qdrant.topic_mappings]]
+topic = "/media/image_embeddings"
+subscription = "qdrant-image-sub"
+subscription_type = "Exclusive"
+collection_name = "visual_search"
+vector_dimension = 512
+# Euclidean distance often works better for visual embeddings
+distance = "Euclid"
+auto_create_collection = true
+include_danube_metadata = true
+batch_size = 100
+batch_timeout_ms = 1500
+
+# ============================================================================
+# TOPIC MAPPING 5: Multi-lingual Content
+# ============================================================================
+# Use case: Multi-lingual text embeddings
+# Model: Cohere embed-multilingual-v3.0 (1024 dimensions)
+# Strategy: Shared subscription for load balancing
+
+[[qdrant.topic_mappings]]
+topic = "/multilang/embeddings"
+subscription = "qdrant-multilang-sub"
+# Shared subscription allows multiple connector instances to share the load
+subscription_type = "Shared"
+collection_name = "multilingual_content"
+vector_dimension = 1024
+distance = "Cosine"
+auto_create_collection = true
+include_danube_metadata = true
+# Use global defaults
+
+# ============================================================================
+# ARCHITECTURE BENEFITS
+# ============================================================================
+#
+# Independent Batching:
+# - Each collection maintains its own batch buffer
+# - chat_vectors flushes every 500ms (low latency)
+# - code_search flushes at 200 points (high throughput)
+# - No cross-collection blocking
+#
+# Flexible Configuration:
+# - Different vector dimensions per collection
+# - Different distance metrics (Cosine, Euclid)
+# - Per-collection metadata inclusion
+# - Independent batch strategies
+#
+# Isolation & Organization:
+# - Separate collections for different data types
+# - Clear separation of concerns
+# - Easy to manage and monitor
+# - Individual collection statistics
+#
+# Scalability:
+# - Add new topic mappings without redeploying
+# - Scale specific collections independently
+# - Shared subscriptions for load balancing
+#
+# ============================================================================
+# RUNNING WITH THIS CONFIGURATION
+# ============================================================================
+#
+# Docker:
+#   docker run \
+#     -v $(pwd)/connector-multi-topic.toml:/etc/connector.toml:ro \
+#     -e CONNECTOR_CONFIG_PATH=/etc/connector.toml \
+#     -e DANUBE_SERVICE_URL=http://danube-broker:6650 \
+#     -e QDRANT_URL=http://qdrant:6334 \
+#     -e QDRANT_API_KEY=${QDRANT_API_KEY} \
+#     danube-sink-qdrant:latest
+#
+# Cargo:
+#   CONNECTOR_CONFIG_PATH=config/connector-multi-topic.toml cargo run --release
+#
+# Environment Variable Overrides (optional):
+#   DANUBE_SERVICE_URL=http://broker:6650     # Override broker URL
+#   CONNECTOR_NAME=qdrant-sink-prod           # Override connector name
+#   QDRANT_URL=http://qdrant:6334             # Override Qdrant URL
+#   QDRANT_API_KEY=your-api-key               # Secret (don't put in TOML)
+#
+# The connector will:
+# 1. Create 5 separate consumers (one per topic)
+# 2. Initialize 5 Qdrant collections (if auto_create_collection=true)
+# 3. Route messages to correct collection based on source topic
+# 4. Batch independently per collection
+# 5. Report statistics per collection on shutdown

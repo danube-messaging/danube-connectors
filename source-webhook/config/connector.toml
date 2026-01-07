@@ -1,0 +1,97 @@
+# HTTP/Webhook Source Connector Configuration
+# This is a reference configuration for the webhook source connector
+
+[core]
+# Danube broker service URL (can be overridden with DANUBE_SERVICE_URL env var)
+danube_service_url = "http://localhost:6650"
+
+# Unique connector name (can be overridden with CONNECTOR_NAME env var)
+connector_name = "webhook-stripe"
+
+# Metrics port for Prometheus (default: 9090)
+metrics_port = 9090
+
+[server]
+# Host to bind to (default: 0.0.0.0)
+host = "0.0.0.0"
+
+# Port to listen on (default: 8080)
+port = 8080
+
+# Request timeout in seconds (default: 30)
+timeout_seconds = 30
+
+# Maximum request body size in bytes (default: 1MB)
+max_body_size = 1048576
+
+# Optional TLS configuration
+# tls_cert_path = "/path/to/cert.pem"
+# tls_key_path = "/path/to/key.pem"
+
+# Platform-wide authentication (applies to ALL endpoints)
+[auth]
+# Authentication type: "none", "apikey", "hmac", or "jwt"
+type = "hmac"
+
+# Environment variable containing the secret
+# For HMAC: webhook signing secret
+# For API Key: the API key value
+# For JWT: the secret key or use public_key_path for RSA
+secret_env = "STRIPE_WEBHOOK_SECRET"
+
+# Header name to check (for HMAC and API Key)
+header = "Stripe-Signature"
+
+# Algorithm for HMAC: "sha256" or "sha512"
+algorithm = "sha256"
+
+# Optional: Public key path for JWT verification (alternative to secret_env)
+# public_key_path = "/path/to/public_key.pem"
+
+# Optional platform-wide rate limiting
+[rate_limit]
+# Requests per second
+requests_per_second = 1000
+
+# Burst size (max requests in burst)
+burst_size = 2000
+
+# Enable per-IP rate limiting (default: false)
+per_ip_enabled = false
+
+# Per-IP requests per second (if per_ip_enabled)
+# per_ip_requests_per_second = 10
+
+# Endpoint 1: Payment events (partitioned, reliable)
+[[endpoints]]
+# HTTP path for this endpoint
+path = "/webhooks/payments"
+
+# Danube topic to publish to
+danube_topic = "/stripe/payments"
+
+# Number of partitions (0 or omitted = non-partitioned)
+partitions = 4
+
+# Reliable dispatch (default: false)
+# Set to true for critical events that must not be lost
+reliable_dispatch = true
+
+# Optional: per-endpoint rate limiting (overrides platform-wide)
+# [endpoints.rate_limit]
+# requests_per_second = 100
+# burst_size = 200
+
+# Endpoint 2: Customer events (partitioned, non-reliable)
+[[endpoints]]
+path = "/webhooks/customers"
+danube_topic = "/stripe/customers"
+partitions = 2
+reliable_dispatch = false
+
+# Endpoint 3: Subscription events (non-partitioned, reliable)
+[[endpoints]]
+path = "/webhooks/subscriptions"
+danube_topic = "/stripe/subscriptions"
+# partitions = 0  # Omitted = non-partitioned (defaults to 0)
+reliable_dispatch = true
