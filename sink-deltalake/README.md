@@ -47,7 +47,7 @@ docker run -d \
 
 For a complete working setup with Docker Compose, MinIO, and test data:
 
-👉 **See [examples/sink-deltalake](../../examples/sink-deltalake/README.md)**
+👉 **See [example/README.md](example/README.md)**
 
 The example includes:
 - Docker Compose setup (Danube + ETCD + MinIO)
