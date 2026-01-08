@@ -2,7 +2,7 @@
 
 <div align="center">
 
-**Production-ready connectors for Danube Messaging**
+**Connectors for Danube Messaging**
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
@@ -14,7 +14,7 @@
 
 ## Overview
 
-This repository contains production-ready connectors for [Danube Messaging](https://github.com/danube-messaging/danube), built with the [`danube-connect-core`](https://github.com/danube-messaging/danube-connect-core) SDK. Each connector enables seamless integration with external systems through Docker-deployable binaries.
+This repository contains connectors for [Danube Messaging](https://github.com/danube-messaging/danube), built with the [`danube-connect-core`](https://github.com/danube-messaging/danube-connect-core) SDK. Each connector enables seamless integration with external systems through Docker-deployable binaries.
 
 ## Features
 

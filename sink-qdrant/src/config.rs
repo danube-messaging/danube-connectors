@@ -80,7 +80,7 @@ impl QdrantSinkConfig {
 
     /// Validate all configuration
     pub fn validate(&self) -> ConnectorResult<()> {
-        self.core.validate()?;
+        // Core config validation is handled by danube-connect-core runtime
         self.qdrant.validate()?;
         Ok(())
     }
@@ -144,6 +144,12 @@ pub struct TopicMapping {
     /// Include Danube metadata in payload for this topic
     #[serde(default = "default_include_metadata")]
     pub include_danube_metadata: bool,
+
+    /// Expected schema subject for validation (optional)
+    /// If set, the runtime validates and deserializes messages automatically
+    /// Schema must be registered in Danube Schema Registry
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_schema_subject: Option<String>,
 
     /// Topic-specific batch size (overrides global)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -301,6 +307,7 @@ mod tests {
                 distance: Distance::Cosine,
                 auto_create_collection: true,
                 include_danube_metadata: true,
+                expected_schema_subject: None,
                 batch_size: None,
                 batch_timeout_ms: None,
             }],

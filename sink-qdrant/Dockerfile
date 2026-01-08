@@ -8,25 +8,12 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /usr/src/app
 
-# Copy workspace configuration (single source of truth)
-COPY Cargo.toml Cargo.lock ./
-
 # Copy only the dependencies we need to build
-COPY danube-connect-core ./danube-connect-core
-COPY connectors/sink-qdrant ./connectors/sink-qdrant
-
-# Filter workspace members to only include what we copied
-# This keeps [workspace.dependencies] intact (single source of truth)
-# but removes references to missing connectors
-RUN sed -i '/members = \[/,/\]/c\
-members = [\
-    "danube-connect-core",\
-    "connectors/sink-qdrant",\
-]' Cargo.toml
+COPY sink-qdrant ./sink-qdrant
 
 # Build the connector
-WORKDIR /usr/src/app
-RUN cargo build --package danube-sink-qdrant --release
+WORKDIR /usr/src/app/sink-qdrant
+RUN cargo build --release
 
 # Runtime stage
 FROM debian:bookworm-slim
@@ -38,7 +25,7 @@ RUN apt-get update && apt-get install -y \
 
 # Copy the binary from builder
 COPY --from=builder \
-    /usr/src/app/target/release/danube-sink-qdrant \
+    /usr/src/app/sink-qdrant/target/release/danube-sink-qdrant \
     /usr/local/bin/danube-sink-qdrant
 
 # Create non-root user

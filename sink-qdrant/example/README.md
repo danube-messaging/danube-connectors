@@ -55,7 +55,7 @@ docker-compose ps
 **Startup Sequence:**
 1. **ETCD** starts and becomes healthy
 2. **Danube Broker** starts (depends on ETCD)
-3. **Topic Init** creates `/default/vectors` topic (depends on Danube)
+3. **Topic Init** registers schema and creates `/default/vectors` topic with validation (depends on Danube)
 4. **Qdrant** starts independently and becomes healthy
 5. **Qdrant Sink** starts (depends on topic creation + Qdrant health)
 
@@ -87,11 +87,11 @@ Download the latest release for your system from [Danube Releases](https://githu
 
 ```bash
 # Linux
-wget https://github.com/danube-messaging/danube/releases/download/v0.5.2/danube-cli-linux
+wget https://github.com/danube-messaging/danube/releases/download/v0.6.x/danube-cli-linux
 chmod +x danube-cli-linux
 
 # macOS (Apple Silicon)
-wget https://github.com/danube-messaging/danube/releases/download/v0.5.2/danube-cli-macos
+wget https://github.com/danube-messaging/danube/releases/download/v0.6.x/danube-cli-macos
 chmod +x danube-cli-macos
 
 # Windows
@@ -107,7 +107,7 @@ chmod +x danube-cli-macos
 
 Or use the Docker image:
 ```bash
-docker pull ghcr.io/danube-messaging/danube-cli:v0.5.2
+docker pull ghcr.io/danube-messaging/danube-cli:v0.6.0
 ```
 
 ### 3. Generate and Send Test Data
@@ -141,8 +141,9 @@ TOPIC=/default/vectors \
 
 The workflow:
 1. `generate_embeddings.py` creates embeddings using sentence-transformers
-2. `test_producer.sh` sends them to Danube using `danube-cli`
-3. Connector automatically streams to Qdrant
+2. `test_producer.sh` sends them to Danube using `danube-cli` with schema validation
+3. Messages are validated against the registered `embeddings-v1` schema
+4. Connector automatically streams validated data to Qdrant
 
 ### 4. Search Vectors
 
@@ -172,7 +173,7 @@ chmod +x search_vectors.py
 
 ### Using Configuration File 
 
-**Single Topic:** `connector.toml`
+**Single Topic with Schema Validation:** `connector.toml`
 ```toml
 [[qdrant.topic_mappings]]
 topic = "/default/vectors"
@@ -182,6 +183,9 @@ vector_dimension = 384
 distance = "Cosine"
 auto_create_collection = true
 include_danube_metadata = true
+
+# Schema validation (v0.2.0)
+expected_schema_subject = "embeddings-v1"
 ```
 
 **Multi-Topic:** `connector-multi-topic.toml`

@@ -5,7 +5,7 @@
 
 mod config;
 mod connector;
-mod transform;
+mod record;
 
 use config::QdrantSinkConfig;
 use connector::QdrantSinkConnector;

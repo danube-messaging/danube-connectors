@@ -1,7 +1,7 @@
-# Qdrant Sink Connector - Multi-Topic Configuration
+# Qdrant Sink Connector - Multi-Topic Configuration (v0.2.0)
 #
 # This example demonstrates routing multiple Danube topics to different 
-# Qdrant collections with independent configurations.
+# Qdrant collections with independent configurations and schema validation.
 #
 # Use Case: RAG pipeline with multiple data sources
 # - Chat messages → chat_vectors (384 dims, frequent updates)
@@ -16,11 +16,13 @@
 connector_name = "qdrant-sink-multi"
 danube_service_url = "http://localhost:6650"
 
+# Optional: retry configuration (defaults provided by runtime)
 [retry]
 max_retries = 3
 retry_backoff_ms = 1000
 max_backoff_ms = 30000
 
+# Optional: processing configuration (defaults provided by runtime)
 [processing]
 batch_size = 100
 batch_timeout_ms = 1000
@@ -57,6 +59,11 @@ vector_dimension = 384
 distance = "Cosine"
 auto_create_collection = true
 include_danube_metadata = true
+
+# Schema validation (optional) - validates messages have correct structure
+# Schema must be registered in Danube Schema Registry before producing
+expected_schema_subject = "chat-embeddings-v1"
+
 # Small batches for real-time updates
 batch_size = 25
 batch_timeout_ms = 500
@@ -77,6 +84,10 @@ vector_dimension = 768
 distance = "Cosine"
 auto_create_collection = true
 include_danube_metadata = true
+
+# Schema validation
+expected_schema_subject = "wiki-embeddings-v1"
+
 # Use global batch settings (50 points, 1000ms)
 
 # ============================================================================
@@ -94,8 +105,13 @@ collection_name = "code_search"
 vector_dimension = 1536
 distance = "Cosine"
 auto_create_collection = true
+
 # Exclude metadata to save space on high-volume code data
 include_danube_metadata = false
+
+# Schema validation
+expected_schema_subject = "code-embeddings-v1"
+
 # Large batches for maximum throughput
 batch_size = 200
 batch_timeout_ms = 2000
@@ -113,10 +129,15 @@ subscription = "qdrant-image-sub"
 subscription_type = "Exclusive"
 collection_name = "visual_search"
 vector_dimension = 512
+
 # Euclidean distance often works better for visual embeddings
 distance = "Euclid"
 auto_create_collection = true
 include_danube_metadata = true
+
+# Schema validation
+expected_schema_subject = "image-embeddings-v1"
+
 batch_size = 100
 batch_timeout_ms = 1500
 
@@ -130,6 +151,7 @@ batch_timeout_ms = 1500
 [[qdrant.topic_mappings]]
 topic = "/multilang/embeddings"
 subscription = "qdrant-multilang-sub"
+
 # Shared subscription allows multiple connector instances to share the load
 subscription_type = "Shared"
 collection_name = "multilingual_content"
@@ -137,6 +159,10 @@ vector_dimension = 1024
 distance = "Cosine"
 auto_create_collection = true
 include_danube_metadata = true
+
+# Schema validation
+expected_schema_subject = "multilang-embeddings-v1"
+
 # Use global defaults
 
 # ============================================================================

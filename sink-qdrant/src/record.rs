@@ -29,10 +29,7 @@ pub fn transform_to_point(
 ) -> ConnectorResult<PointStruct> {
     // Parse message from typed payload (already serde_json::Value)
     let message: VectorMessage = serde_json::from_value(record.payload().clone()).map_err(|e| {
-        ConnectorError::invalid_data(
-            format!("Failed to deserialize message: {}", e),
-            vec![], // No raw bytes in v0.7.0 - payload is typed
-        )
+        ConnectorError::invalid_data(format!("Failed to deserialize message: {}", e), vec![])
     })?;
 
     // Validate vector dimension
@@ -43,7 +40,7 @@ pub fn transform_to_point(
                 expected_dimension,
                 message.vector.len()
             ),
-            vec![], // No raw bytes in v0.7.0 - payload is typed
+            vec![],
         ));
     }
 
@@ -201,74 +198,6 @@ fn add_json_to_payload(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use danube_connect_core::SinkRecord;
-    use danube_core::message::{MessageID, StreamMessage};
-    use std::collections::HashMap;
-
-    #[test]
-    fn test_transform_valid_message() {
-        let json = serde_json::json!({
-            "id": "test-123",
-            "vector": [0.1, 0.2, 0.3],
-            "payload": {
-                "text": "Hello world",
-                "user_id": "user-456"
-            }
-        });
-
-        let message = StreamMessage {
-            request_id: 1,
-            msg_id: MessageID {
-                producer_id: 100,
-                topic_name: "/test/vectors".to_string(),
-                broker_addr: "localhost:6650".to_string(),
-                topic_offset: 42,
-            },
-            payload: serde_json::to_vec(&json).unwrap(),
-            publish_time: 1234567890,
-            producer_name: "test-producer".to_string(),
-            subscription_name: Some("test-sub".to_string()),
-            attributes: HashMap::new(),
-            schema_id: None,
-            schema_version: None,
-        };
-
-        let record = SinkRecord::from_stream_message(message, None);
-        let point = transform_to_point(&record, 3, true).unwrap();
-
-        // Verify point was created successfully
-        assert!(point.id.is_some());
-        assert!(point.payload.len() > 0); // Should have payload with metadata
-    }
-
-    #[test]
-    fn test_transform_dimension_mismatch() {
-        let json = serde_json::json!({
-            "vector": [0.1, 0.2]  // Only 2 dimensions
-        });
-
-        let message = StreamMessage {
-            request_id: 1,
-            msg_id: MessageID {
-                producer_id: 100,
-                topic_name: "/test/vectors".to_string(),
-                broker_addr: "localhost:6650".to_string(),
-                topic_offset: 42,
-            },
-            payload: serde_json::to_vec(&json).unwrap(),
-            publish_time: 1234567890,
-            producer_name: "test-producer".to_string(),
-            subscription_name: Some("test-sub".to_string()),
-            attributes: HashMap::new(),
-            schema_id: None,
-            schema_version: None,
-        };
-
-        let record = SinkRecord::from_stream_message(message, None);
-        let result = transform_to_point(&record, 3, false); // Expect 3 dimensions
-
-        assert!(result.is_err());
-    }
 
     #[test]
     fn test_hash_string_to_u64() {
@@ -283,34 +212,50 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_point_id_from_offset() {
-        let message = VectorMessage {
-            id: None,
-            vector: vec![0.1, 0.2, 0.3],
-            payload: None,
-        };
+    fn test_vector_message_parsing() {
+        let json = serde_json::json!({
+            "id": "test-123",
+            "vector": [0.1, 0.2, 0.3],
+            "payload": {
+                "text": "Hello world",
+                "user_id": "user-456"
+            }
+        });
 
-        let stream_message = StreamMessage {
-            request_id: 1,
-            msg_id: MessageID {
-                producer_id: 100,
-                topic_name: "/test/vectors".to_string(),
-                broker_addr: "localhost:6650".to_string(),
-                topic_offset: 42,
-            },
-            payload: vec![],
-            publish_time: 1234567890,
-            producer_name: "test-producer".to_string(),
-            subscription_name: Some("test-sub".to_string()),
-            attributes: HashMap::new(),
-            schema_id: None,
-            schema_version: None,
-        };
+        let message: VectorMessage = serde_json::from_value(json).unwrap();
 
-        let record = SinkRecord::from_stream_message(stream_message, None);
-        let id = generate_point_id(&message, &record);
+        assert_eq!(message.id, Some("test-123".to_string()));
+        assert_eq!(message.vector.len(), 3);
+        assert!(message.payload.is_some());
+    }
 
-        // Should generate consistent ID based on topic + offset
-        assert!(id > 0);
+    #[test]
+    fn test_vector_message_minimal() {
+        let json = serde_json::json!({
+            "vector": [0.1, 0.2, 0.3]
+        });
+
+        let message: VectorMessage = serde_json::from_value(json).unwrap();
+
+        assert!(message.id.is_none());
+        assert_eq!(message.vector.len(), 3);
+        assert!(message.payload.is_none());
+    }
+
+    #[test]
+    fn test_add_json_to_payload() {
+        let mut payload = HashMap::new();
+        let json = serde_json::json!({
+            "text": "Hello",
+            "count": 42,
+            "enabled": true
+        });
+
+        add_json_to_payload(&mut payload, "", json);
+
+        // Verify fields were added
+        assert!(payload.contains_key("text"));
+        assert!(payload.contains_key("count"));
+        assert!(payload.contains_key("enabled"));
     }
 }

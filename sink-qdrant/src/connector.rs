@@ -1,7 +1,7 @@
 //! Qdrant sink connector implementation
 
 use crate::config::{QdrantConfig, TopicMapping};
-use crate::transform::transform_to_point;
+use crate::record::transform_to_point;
 use async_trait::async_trait;
 use danube_connect_core::{
     ConnectorConfig, ConnectorError, ConnectorResult, ConsumerConfig, SinkConnector, SinkRecord,
@@ -287,7 +287,9 @@ impl SinkConnector for QdrantSinkConnector {
                 consumer_name: format!("qdrant-sink-{}", mapping.collection_name),
                 subscription: mapping.subscription.clone(),
                 subscription_type: mapping.subscription_type.clone(),
-                expected_schema_subject: None, // No schema validation for Qdrant sink (accepts any valid JSON)
+                // Use schema subject from mapping if specified
+                // Runtime will validate and deserialize messages automatically
+                expected_schema_subject: mapping.expected_schema_subject.clone(),
             })
             .collect();
 
@@ -425,6 +427,7 @@ mod tests {
             distance: Distance::Cosine,
             auto_create_collection: true,
             include_danube_metadata: true,
+            expected_schema_subject: None,
             batch_size: Some(3),
             batch_timeout_ms: None,
         };
@@ -461,6 +464,7 @@ mod tests {
             distance: Distance::Cosine,
             auto_create_collection: true,
             include_danube_metadata: true,
+            expected_schema_subject: None,
             batch_size: Some(50),
             batch_timeout_ms: Some(500),
         };
@@ -478,6 +482,7 @@ mod tests {
             distance: Distance::Euclid,
             auto_create_collection: true,
             include_danube_metadata: false,
+            expected_schema_subject: None,
             batch_size: None,
             batch_timeout_ms: None,
         };

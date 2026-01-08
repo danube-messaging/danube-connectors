@@ -5,6 +5,7 @@ High-performance sink connector for streaming vector embeddings from Danube to Q
 ## ✨ Features
 
 - 🚀 **Native Rust** - Built with qdrant-client for maximum performance
+- 🔒 **Schema Validation** - Runtime validation with Danube Schema Registry
 - 🎯 **Multi-Topic Routing** - Route multiple Danube topics to different Qdrant collections
 - 📦 **Intelligent Batching** - Configurable batching per collection for optimal throughput
 - 🔄 **Auto-Collection Management** - Automatically creates collections with proper configuration
@@ -35,7 +36,7 @@ docker run -d \
 
 For a complete working setup with Docker Compose, embedding generation, and test data:
 
-👉 **See [examples/sink-qdrant](../../examples/sink-qdrant/README.md)**
+👉 **See [example/](example/README.md)**
 
 The example includes:
 - Docker Compose setup (Danube + ETCD + Qdrant)
@@ -44,10 +45,11 @@ The example includes:
 - Test producers using danube-cli
 - Query and search examples
 
-## Message Format
+## 📝 Message Format
 
 The connector expects JSON messages with vector embeddings:
 
+### **Standard Format**
 ```json
 {
   "id": "optional-point-id",
@@ -59,12 +61,54 @@ The connector expects JSON messages with vector embeddings:
 }
 ```
 
-**Minimal format:**
+### **Minimal Format**
 ```json
 {
   "vector": [0.1, 0.2, 0.3, ...]
 }
 ```
+
+### **Schema Validation**
+
+Register a JSON Schema for message validation:
+
+```bash
+# Create schema
+cat > vector-schema.json << 'EOF'
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "VectorEmbedding",
+  "type": "object",
+  "properties": {
+    "id": {"type": "string"},
+    "vector": {
+      "type": "array",
+      "items": {"type": "number"},
+      "minItems": 1
+    },
+    "payload": {"type": "object"}
+  },
+  "required": ["vector"]
+}
+EOF
+
+# Register with Danube
+danube-admin-cli schemas register chat-embeddings-v1 \
+  --schema-type json_schema \
+  --file vector-schema.json
+
+# Produce validated messages
+danube-cli produce \
+  --topic /default/vectors \
+  --schema-subject chat-embeddings-v1 \
+  --message '{"vector": [0.1, 0.2, 0.3], "payload": {"text": "Hello"}}'
+```
+
+**Benefits:**
+- ✅ Messages validated before reaching connector
+- ✅ Type-safe deserialization by runtime
+- ✅ Schema evolution support
+- ✅ Clear error messages at producer
 
 ## ⚙️ Configuration
 
@@ -93,22 +137,38 @@ collection_name = "vectors"
 vector_dimension = 384
 distance = "Cosine"
 auto_create_collection = true
+
+# Optional: Enable schema validation
+expected_schema_subject = "embeddings-v1"
 ```
 
-**Multiple Collections (Advanced RAG):**
+**Multiple Collections with Schema Validation (Advanced RAG):**
 ```toml
-# Route different topics to different collections
+# Chat embeddings - validated with schema
 [[qdrant.topic_mappings]]
 topic = "/chat/embeddings"
 collection_name = "chat_vectors"
 vector_dimension = 384
 distance = "Cosine"
+expected_schema_subject = "chat-embeddings-v1"  # Schema validation
 
+# Documentation - different dimension & schema
 [[qdrant.topic_mappings]]
 topic = "/docs/embeddings"
 collection_name = "documentation"
 vector_dimension = 768
 distance = "Cosine"
+expected_schema_subject = "doc-embeddings-v1"
+```
+
+**Without Schema Validation (Backward Compatible):**
+```toml
+[[qdrant.topic_mappings]]
+topic = "/legacy/vectors"
+collection_name = "legacy_data"
+vector_dimension = 1536
+distance = "Cosine"
+# No expected_schema_subject - accepts any valid JSON
 ```
 
 See [config/README.md](config/README.md) for more patterns.
@@ -229,16 +289,42 @@ RUST_LOG=debug,danube_sink_qdrant=trace cargo run
 {"vector": [0.1, 0.2, ...], "payload": {...}}
 ```
 
+#### Schema Validation Errors (v0.2.0)
+
+**Error:** `Schema validation failed: missing required field 'vector'`
+
+**Solution:** Register schema and ensure messages match:
+```bash
+# 1. Check registered schema
+danube-admin-cli schemas get chat-embeddings-v1
+
+# 2. Produce with correct structure
+danube-cli produce \
+  --topic /default/vectors \
+  --schema-subject chat-embeddings-v1 \
+  --message '{"vector": [0.1, 0.2], "payload": {}}'
+```
+
+**Error:** `Schema 'embeddings-v1' not found`
+
+**Solution:** Register schema before starting connector:
+```bash
+danube-admin-cli schemas register embeddings-v1 \
+  --schema-type json_schema \
+  --file schema.json
+```
+
 For more troubleshooting, see the [configuration guide](config/README.md).
 
 ## 📚 Documentation
 
 ### Complete Working Example
 
-See **[examples/sink-qdrant](../../examples/sink-qdrant)** for a complete setup with:
+See **[example/](example/)** for a complete setup with:
 - Docker Compose (Danube + ETCD + Qdrant)
+- Schema registration examples
 - Embedding generation scripts
-- Test producers using danube-cli
+- Test producers using danube-cli with schemas
 - Single and multi-topic configurations
 - Monitoring and dashboards
 
@@ -261,10 +347,9 @@ The connector supports routing multiple Danube topics to different Qdrant collec
 ### References
 
 - **[Configuration Guide](config/README.md)** - Complete configuration reference
-- **[Working Example](../../examples/sink-qdrant)** - Docker Compose setup
+- **[Working Example](example/)** - Docker Compose setup
 - [Qdrant Documentation](https://qdrant.tech/documentation/)
 - [qdrant-client Rust Crate](https://docs.rs/qdrant-client/)
-- [Connector Development Guide](../../info/connector-development-guide.md)
 - [RAG with Qdrant](https://qdrant.tech/articles/what-is-rag-in-ai/)
 
 ## License

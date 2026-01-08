@@ -66,25 +66,34 @@ services:
         "danube-broker:6650",
       ]
 
-  # Topic Initialization - Creates Danube topics before connectors start
+  # Topic Initialization - Creates schema and topic with validation
   topic-init:
-    image: ghcr.io/danube-messaging/danube-cli:v0.5.2
+    image: ghcr.io/danube-messaging/danube-cli:latest
     container_name: qdrant-topic-init
     depends_on:
       danube-broker:
         condition: service_started
     environment:
       - DANUBE_ADMIN_ENDPOINT=http://danube-broker:50051
+    volumes:
+      # Mount schema definition file
+      - ./embeddings-schema.json:/schemas/embeddings-schema.json:ro
     networks:
       - qdrant-network
-    command: >
-      sh -c "
-        echo 'Waiting for Danube broker to be ready...';
-        sleep 5;
-        echo 'Creating topic /default/vectors...';
-        danube-admin-cli topics create /default/vectors --dispatch-strategy reliable || echo 'Topic may already exist';
-        echo 'Topic initialization complete';
-      "
+    command:
+      - sh
+      - -c
+      - |
+        echo 'Waiting for Danube broker to be ready...'
+        sleep 5
+
+        echo 'Registering schema: embeddings-v1...'
+        danube-admin-cli schemas register embeddings-v1 --schema-type json_schema --file /schemas/embeddings-schema.json || echo 'Schema may already exist'
+
+        echo 'Creating topic /default/vectors with schema validation...'
+        danube-admin-cli topics create /default/vectors --dispatch-strategy reliable --schema-subject embeddings-v1 || echo 'Topic may already exist'
+
+        echo 'Schema and topic initialization complete'
     restart: "no"
 
   # Qdrant Vector Database
@@ -101,7 +110,11 @@ services:
     networks:
       - qdrant-network
     healthcheck:
-      test: ["CMD-SHELL", "timeout 5s bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "timeout 5s bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1",
+        ]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -111,7 +124,7 @@ services:
   qdrant-sink:
     build:
       context: ../../
-      dockerfile: connectors/sink-qdrant/Dockerfile
+      dockerfile: sink-qdrant/Dockerfile
     container_name: qdrant-sink
     depends_on:
       topic-init:

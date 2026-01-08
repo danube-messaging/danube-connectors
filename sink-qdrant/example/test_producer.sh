@@ -53,11 +53,11 @@ if ! command -v ${DANUBE_CLI} &> /dev/null && [ ! -f "${DANUBE_CLI}" ]; then
     echo "   https://github.com/danube-messaging/danube/releases"
     echo ""
     echo "   # Linux"
-    echo "   wget https://github.com/danube-messaging/danube/releases/download/v0.5.2/danube-cli-linux"
+    echo "   wget https://github.com/danube-messaging/danube/releases/download/v0.6.x/danube-cli-linux"
     echo "   chmod +x danube-cli-linux"
     echo ""
     echo "   # macOS"
-    echo "   wget https://github.com/danube-messaging/danube/releases/download/v0.5.2/danube-cli-macos"
+    echo "   wget https://github.com/danube-messaging/danube/releases/download/v0.6.x/danube-cli-macos"
     echo "   chmod +x danube-cli-macos"
     echo ""
     echo "Or specify custom path:"
@@ -110,10 +110,11 @@ while IFS= read -r message; do
     text=$(echo "$message" | jq -r '.payload.text // "N/A"' 2>/dev/null || echo "N/A")
     text_short="${text:0:50}"
     
-    # Send message using danube-cli (use string schema, connector will parse JSON)
+    # Send message using danube-cli with schema validation (v0.2.0)
     if ${DANUBE_CLI} produce \
         --service-addr "${DANUBE_URL}" \
         --topic "${TOPIC}" \
+        --schema-subject "embeddings-v1" \
         --message "$message" \
         --interval ${INTERVAL} \
         --reliable \

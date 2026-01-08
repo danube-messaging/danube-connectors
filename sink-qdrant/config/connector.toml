@@ -132,6 +132,11 @@ auto_create_collection = true
 # - Source tracking for mixed pipelines
 include_danube_metadata = true
 
+# Schema validation - validates messages against registered schema
+# If set, the runtime validates and deserializes messages automatically
+# Schema must be registered in Danube Schema Registry before starting
+# expected_schema_subject = "embeddings-v1"
+
 # Per-topic batch overrides (optional)
 # Uncomment to override global batch_size and batch_timeout_ms for this topic
 # batch_size = 100
