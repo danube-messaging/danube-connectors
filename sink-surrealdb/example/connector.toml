@@ -48,12 +48,16 @@ topic = "/default/events"
 # Subscription name (for consumer group)
 subscription = "surrealdb-sink-sub"
 
+# Subscription type: "Exclusive", "Shared", or "FailOver"
+subscription_type = "Shared"
+
 # Target SurrealDB table name
 table_name = "events"
 
-# Schema type - must match Danube topic schema
-# Options: "Json", "String", "Int64", "Bytes"
-schema_type = "Json"
+# Schema validation - validates messages against registered schema (v0.2.0)
+# If set, the runtime validates and deserializes messages automatically
+# Schema must be registered in Danube Schema Registry before starting
+expected_schema_subject = "events-v1"
 
 # Storage mode: "Document" (default) or "TimeSeries"
 # Document: Regular document storage

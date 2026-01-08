@@ -64,14 +64,20 @@ topic = "/default/events"
 # Subscription name for this consumer
 subscription = "surrealdb-sink"
 
+# Subscription type: "Exclusive", "Shared", or "FailOver"
+# - Exclusive: Only one consumer per subscription (default behavior)
+# - Shared: Multiple consumers share the load (load balancing)
+# - FailOver: Active-passive failover setup
+subscription_type = "Shared"
+
 # SurrealDB table name to insert records into
 # The table will be created automatically if it doesn't exist
 table_name = "events"
 
-# Schema type for this topic (must match Danube topic schema)
-# Supported: "Json", "String", "Int64", "Bytes"
-# This determines how the connector interprets and inserts the payload
-schema_type = "Json"
+# Schema validation - validates messages against registered schema
+# If set, the runtime validates and deserializes messages automatically
+# Schema must be registered in Danube Schema Registry before starting
+# expected_schema_subject = "events-v1"
 
 # Storage mode: "Document" (default) or "TimeSeries"
 # Document: Regular document storage

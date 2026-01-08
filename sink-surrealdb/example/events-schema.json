@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Event",
+  "description": "Schema for event messages streamed to SurrealDB",
+  "type": "object",
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "description": "Unique event identifier"
+    },
+    "event_type": {
+      "type": "string",
+      "description": "Type of event (e.g., 'user.login', 'order.created')"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Event timestamp in ISO 8601 format"
+    },
+    "user_id": {
+      "type": "string",
+      "description": "User identifier associated with the event"
+    },
+    "data": {
+      "type": "object",
+      "description": "Event-specific data payload"
+    }
+  },
+  "required": ["event_type", "timestamp"]
+}

@@ -1,14 +1,15 @@
 # SurrealDB Sink Connector Example
 
-Complete working example demonstrating the SurrealDB Sink Connector for streaming real-time events into SurrealDB.
+Complete working example demonstrating the SurrealDB Sink Connector v0.2.0 with **schema validation** for streaming real-time events into SurrealDB.
 
 ## Overview
 
 This example shows how to:
-1. Run Danube broker, SurrealDB, and the connector with Docker Compose
-2. Generate sample events and send them to Danube
-3. Automatically stream events to SurrealDB tables
-4. Query and analyze the data in SurrealDB
+1. Register JSON schemas in Danube Schema Registry
+2. Run Danube broker, SurrealDB, and the connector with Docker Compose
+3. Generate sample events and send them to Danube with schema validation
+4. Automatically stream validated events to SurrealDB tables
+5. Query and analyze the data in SurrealDB
 
 ## Architecture
 
@@ -17,17 +18,19 @@ This example shows how to:
 │  Test Producer  │
 │  (danube-cli)   │
 └────────┬────────┘
-         │ Events (JSON)
+         │ Events (JSON + Schema)
          ▼
-┌─────────────────┐     ┌──────────┐
-│ Danube Broker   │────▶│   ETCD   │
-│  Topic: events  │     │ Metadata │
-└────────┬────────┘     └──────────┘
-         │ Stream
+┌─────────────────┐     ┌───────────────┐     ┌──────────┐
+│ Danube Broker   │────▶│ Schema        │────▶│   ETCD   │
+│  Topic: events  │     │ Registry      │     │ Metadata │
+│  Schema: v1     │     │ (events-v1)   │     └──────────┘
+└────────┬────────┘     └───────────────┘
+         │ Validated Stream
          ▼
 ┌─────────────────┐
 │ SurrealDB Sink  │
 │   Connector     │
+│   v0.2.0        │
 └────────┬────────┘
          │ Batch Insert
          ▼
@@ -58,7 +61,9 @@ docker-compose ps
 **Startup Sequence:**
 1. **ETCD** starts and becomes healthy
 2. **Danube Broker** starts (depends on ETCD)
-3. **Topic Init** creates `/default/events` topic (depends on Danube)
+3. **Topic Init** (depends on Danube):
+   - Registers schema `events-v1` in Schema Registry
+   - Creates `/default/events` topic with schema validation
 4. **SurrealDB** starts independently and becomes healthy
 5. **SurrealDB Sink** starts (depends on topic creation + SurrealDB health)
 
@@ -70,17 +75,17 @@ Services:
 - **SurrealDB HTTP/WS**: `http://localhost:8000`
 - **Connector Metrics**: `http://localhost:9090/metrics`
 
-### 2. Install danube-cli
+### 2. Install danube-cli (v0.6.1+)
 
-Download the latest release for your system from [Danube Releases](https://github.com/danube-messaging/danube/releases):
+Download v0.6.1 or later for schema validation support from [Danube Releases](https://github.com/danube-messaging/danube/releases):
 
 ```bash
 # Linux
-wget https://github.com/danube-messaging/danube/releases/download/v0.5.2/danube-cli-linux
+wget https://github.com/danube-messaging/danube/releases/download/v0.6.1/danube-cli-linux
 chmod +x danube-cli-linux
 
 # macOS (Apple Silicon)
-wget https://github.com/danube-messaging/danube/releases/download/v0.5.2/danube-cli-macos
+wget https://github.com/danube-messaging/danube/releases/download/v0.6.1/danube-cli-macos
 chmod +x danube-cli-macos
 
 # Windows
@@ -96,7 +101,7 @@ chmod +x danube-cli-macos
 
 Or use the Docker image:
 ```bash
-docker pull ghcr.io/danube-messaging/danube-cli:v0.5.2
+docker pull ghcr.io/danube-messaging/danube-cli:latest
 ```
 
 ### 3. Send Test Data
@@ -115,12 +120,27 @@ COUNT=20 \
 ./test_producer.sh
 ```
 
-The script generates various event types:
+The script generates various event types validated against the `events-v1` schema:
 - **user_signup**: New user registrations
 - **user_login**: User login events
 - **purchase**: E-commerce transactions
 - **page_view**: Website page views
 - **api_call**: API endpoint calls
+
+**Example event** (matches `events-schema.json`):
+```json
+{
+  "event_id": "evt_1_1704567890_12345",
+  "event_type": "purchase",
+  "timestamp": "2026-01-08T19:45:00Z",
+  "user_id": "user_001",
+  "data": {
+    "product": "laptop",
+    "amount": 850,
+    "currency": "USD"
+  }
+}
+```
 
 ### 4. Query SurrealDB
 
@@ -165,6 +185,41 @@ curl -X POST http://localhost:8000/sql \
 ```
 
 
+## Schema Validation (v0.2.0)
+
+### Event Schema
+
+Messages are validated against `events-schema.json`:
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "event_id": {"type": "string"},
+    "event_type": {"type": "string"},
+    "timestamp": {"type": "string", "format": "date-time"},
+    "user_id": {"type": "string"},
+    "data": {"type": "object"}
+  },
+  "required": ["event_type", "timestamp"]
+}
+```
+
+### How It Works
+
+1. **Schema Registration**: `topic-init` service registers `events-v1` schema
+2. **Topic Creation**: Topic created with `--schema-subject events-v1`
+3. **Producer Validation**: `danube-cli` validates messages before sending
+4. **Runtime Validation**: Broker validates all messages
+5. **Automatic Deserialization**: Connector receives pre-validated, deserialized JSON
+
+### Benefits
+
+- ✅ **Data Quality**: Invalid messages rejected at source
+- ✅ **Type Safety**: Guaranteed message structure
+- ✅ **Early Detection**: Validation errors caught at producer
+- ✅ **Simplified Code**: No manual deserialization in connector
+
 ## Configuration
 
 ### Single Topic Configuration
@@ -175,8 +230,9 @@ The example uses a single topic mapping in `connector.toml`:
 [[surrealdb.topic_mappings]]
 topic = "/default/events"
 subscription = "surrealdb-sink-sub"
+subscription_type = "Shared"            # Load balancing
 table_name = "events"
-schema_type = "Json"
+expected_schema_subject = "events-v1"  # Schema validation
 storage_mode = "Document"
 include_danube_metadata = true
 ```
@@ -186,30 +242,33 @@ include_danube_metadata = true
 To route multiple Danube topics to different SurrealDB tables, add more mappings:
 
 ```toml
-# User events → users table
+# User events → users table (with schema validation)
 [[surrealdb.topic_mappings]]
 topic = "/default/users"
 subscription = "surrealdb-users"
+subscription_type = "Shared"
 table_name = "users"
-schema_type = "Json"
+expected_schema_subject = "users-v1"  # Validate against users schema
 storage_mode = "Document"
 
-# IoT sensor data → temperature table (time-series)
+# IoT sensor data → temperature table (time-series with schema)
 [[surrealdb.topic_mappings]]
 topic = "/iot/temperature"
 subscription = "surrealdb-iot"
+subscription_type = "Shared"
 table_name = "temperature_readings"
-schema_type = "Json"
+expected_schema_subject = "sensor-v1"  # Validate sensor data
 storage_mode = "TimeSeries"  # Adds _timestamp field
 batch_size = 500
 flush_interval_ms = 2000
 
-# Logs → logs table
+# Logs → logs table (no schema validation for flexibility)
 [[surrealdb.topic_mappings]]
 topic = "/logs/application"
 subscription = "surrealdb-logs"
+subscription_type = "Exclusive"
 table_name = "app_logs"
-schema_type = "String"
+# expected_schema_subject not set - accepts any data
 storage_mode = "Document"
 ```
 
@@ -291,33 +350,64 @@ curl -X POST http://localhost:8000/sql \
   -d '{"query": "SELECT count() FROM events;"}' | jq
 ```
 
-### Test Different Schema Types
+### Verify Schema Validation
 
-**JSON Schema (Default):**
+**Check registered schemas:**
 ```bash
-# Already configured in connector.toml
-./test_producer.sh
-```
+# List all schemas
+docker exec surrealdb-topic-init danube-admin-cli schemas list
 
-**String Schema:**
-```toml
-schema_type = "String"
-```
-```bash
-# Send plain text
-echo "Log message" | danube-cli produce -s http://localhost:6650 -t /default/logs
+# Get schema details
+docker exec surrealdb-topic-init danube-admin-cli schemas get events-v1
 ```
 
-**Int64 Schema:**
-```toml
-schema_type = "Int64"
-```
+**Check topic schema:**
 ```bash
-# Send numbers
-echo "42" | danube-cli produce -s http://localhost:6650 -t /default/counters
+# Describe topic to see schema-subject
+docker exec surrealdb-topic-init danube-admin-cli topics describe /default/events
+```
+
+**Test schema validation:**
+```bash
+# Valid message (passes validation)
+danube-cli produce --service-addr http://localhost:6650 \
+  --topic /default/events \
+  --schema-subject events-v1 \
+  --message '{"event_type":"test","timestamp":"2026-01-08T19:45:00Z"}'
+
+# Invalid message (fails validation - missing required field)
+danube-cli produce --service-addr http://localhost:6650 \
+  --topic /default/events \
+  --schema-subject events-v1 \
+  --message '{"event_type":"test"}'  # Missing timestamp - will fail
 ```
 
 ## Troubleshooting
+
+### Schema Validation Errors
+
+**Error:** `Schema validation failed`
+
+**Solution:**
+1. Check schema is registered:
+```bash
+docker exec surrealdb-topic-init danube-admin-cli schemas list
+```
+
+2. Verify message matches schema:
+```bash
+# Required fields for events-v1:
+# - event_type (string)
+# - timestamp (date-time string)
+```
+
+3. Test with valid message:
+```bash
+danube-cli produce --service-addr http://localhost:6650 \
+  --topic /default/events \
+  --schema-subject events-v1 \
+  --message '{"event_type":"test","timestamp":"2026-01-08T19:45:00Z"}'
+```
 
 ### Connector Not Starting
 
@@ -326,9 +416,11 @@ echo "42" | danube-cli produce -s http://localhost:6650 -t /default/counters
 docker-compose logs surrealdb-sink
 
 # Common issues:
-# 1. Danube not ready - wait for healthcheck
-# 2. SurrealDB not ready - wait for healthcheck
-# 3. Invalid credentials - check SURREALDB_USERNAME/PASSWORD
+# 1. Topic not created - check topic-init logs
+# 2. Schema not registered - check topic-init logs
+# 3. Danube not ready - wait for healthcheck
+# 4. SurrealDB not ready - wait for healthcheck
+# 5. Invalid credentials - check SURREALDB_USERNAME/PASSWORD
 ```
 
 ### No Data in SurrealDB
@@ -429,16 +521,48 @@ docker-compose down -v
 docker-compose down -v --rmi all
 ```
 
+## What Gets Stored in SurrealDB
+
+With `include_danube_metadata = true`, records include Danube metadata:
+
+```json
+{
+  "event_id": "evt_1_1704567890_12345",
+  "event_type": "purchase",
+  "timestamp": "2026-01-08T19:45:00Z",
+  "user_id": "user_001",
+  "data": {
+    "product": "laptop",
+    "amount": 850,
+    "currency": "USD"
+  },
+  "_danube_metadata": {
+    "danube_topic": "/default/events",
+    "danube_offset": 42,
+    "danube_timestamp": "2026-01-08T19:45:23.456789Z",
+    "danube_message_id": "..."
+  }
+}
+```
+
+**With TimeSeries mode**, an additional `_timestamp` field is added:
+```json
+{
+  "_timestamp": "2026-01-08T19:45:23.456789Z",
+  ...
+}
+```
+
 ## Resources
 
 - [SurrealDB Documentation](https://surrealdb.com/docs)
 - [SurrealDB Query Language](https://surrealdb.com/docs/surrealql)
 - [Danube Messaging](https://github.com/danube-messaging/danube)
-- [Connector Development Guide](../../info/connector-development-guide.md)
+- [Connector Configuration Guide](../config/README.md)
 
 ## Support
 
 For issues or questions:
-- Check [connector logs](../../connectors/sink-surrealdb/README.md#troubleshooting)
-- Review [development guide](../../info/connector-development-guide.md)
+- Check [connector documentation](../README.md)
+- Review [configuration guide](../config/README.md)
 - Open an issue on GitHub

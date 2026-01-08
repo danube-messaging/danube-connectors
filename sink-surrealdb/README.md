@@ -4,11 +4,12 @@ Stream events from Danube into [SurrealDB](https://surrealdb.com/) - the ultimat
 
 ## ✨ Features
 
+- 🔒 **Schema Validation** - Validate messages against registered JSON schemas
 - 🚀 **Multi-Model Support** - Store events as documents or time-series data
-- 📊 **Schema-Aware** - Supports JSON, String, Int64, and Bytes schema types
 - ⏱️ **Time-Series Optimization** - Automatic timestamp handling for temporal queries
 - 🎯 **Multi-Topic Routing** - Route different topics to different tables with independent configurations
 - 📦 **Configurable Batching** - Optimize throughput with per-topic batch sizes and flush intervals
+- 🔄 **Subscription Types** - Shared, Exclusive, or FailOver subscription modes
 - 🔑 **Custom Record IDs** - Use message attributes for idempotent inserts or auto-generate
 - 📝 **Metadata Enrichment** - Optionally include Danube metadata (topic, offset, timestamp)
 - ⚡ **Zero-Copy Performance** - Rust-to-Rust with WebSocket protocol
@@ -37,17 +38,18 @@ docker run -d \
   danube/sink-surrealdb:latest
 ```
 
-**Note:** All structural configuration (topics, tables, schema types, batching) must be in `connector.toml`. See [Configuration](#configuration) section below.
+**Note:** All structural configuration (topics, tables, schema validation, batching) must be in `connector.toml`. See [Configuration](#configuration) section below.
 
 ### Complete Example
 
 For a complete working setup with Docker Compose, test data, and query examples:
 
-👉 **See [examples/sink-surrealdb](../../examples/sink-surrealdb/README.md)**
+👉 **See [sink-surrealdb example](example/README.md)**
 
 The example includes:
-- Docker Compose setup (Danube + ETCD + SurrealDB)
-- Pre-configured connector.toml
+- Docker Compose setup (Danube + ETCD + SurrealDB + Schema Registry)
+- Schema registration and validation
+- Pre-configured connector.toml with v0.2.0 features
 - Test producers using danube-cli
 - Query examples and data verification
 
@@ -57,10 +59,10 @@ The example includes:
 
 See **[config/README.md](config/README.md)** for comprehensive configuration documentation including:
 - Core and connector-specific configuration options
-- Schema types and storage modes
+- Schema validation setup (v0.2.0)
+- Subscription types and storage modes
 - Environment variable reference
-- Configuration patterns and best practices
-- Performance tuning guidelines
+- Configuration examples
 
 ### 📄 Quick Reference
 
@@ -77,7 +79,7 @@ Environment variables are used **only for secrets and connection URLs**:
 | `SURREALDB_USERNAME` | Database username | **Secrets** - should not be in config files |
 | `SURREALDB_PASSWORD` | Database password | **Secrets** - should not be in config files |
 
-**All other configuration (topics, tables, schema types, batching) must be in the TOML file.**
+**All other configuration (topics, tables, schema validation, batching) must be in the TOML file.**
 
 #### TOML Configuration (Required)
 
@@ -98,21 +100,25 @@ password = "password"
 batch_size = 100
 flush_interval_ms = 1000
 
-# Route user events to user_events table (JSON)
+# Route user events to user_events table with schema validation
 [[surrealdb.topic_mappings]]
 topic = "/events/user"
 subscription = "surrealdb-user"
+subscription_type = "Shared"
 table_name = "user_events"
-schema_type = "Json"
+expected_schema_subject = "user-events-v1"  # Schema validation
+storage_mode = "Document"
 include_danube_metadata = true
 batch_size = 200
 
-# Route IoT data to sensor_readings table (JSON)
+# Route IoT data to sensor_readings table (time-series)
 [[surrealdb.topic_mappings]]
 topic = "/iot/sensors"
 subscription = "surrealdb-iot"
+subscription_type = "Shared"
 table_name = "sensor_readings"
-schema_type = "Json"
+expected_schema_subject = "sensor-v1"  # Schema validation
+storage_mode = "TimeSeries"  # Adds _timestamp field
 include_danube_metadata = true
 batch_size = 500
 flush_interval_ms = 2000
@@ -135,19 +141,46 @@ cargo test
 docker build -t danube/sink-surrealdb:latest .
 ```
 
-### Schema Types
+### Schema Validation
 
-The connector supports Danube's schema system for type-safe data handling:
-
-### JSON Schema (Default)
-
-Most common for structured data:
+Validate messages against registered JSON schemas:
 
 ```toml
-schema_type = "Json"
+[[surrealdb.topic_mappings]]
+topic = "/events/user"
+subscription = "surrealdb-user"
+subscription_type = "Shared"
+table_name = "user_events"
+expected_schema_subject = "user-events-v1"  # Enable validation
+storage_mode = "Document"
 ```
 
-**Input:**
+**Benefits:**
+- ✅ **Data Quality** - Invalid messages rejected at source
+- ✅ **Type Safety** - Guaranteed message structure
+- ✅ **Early Detection** - Validation errors caught at producer
+- ✅ **Automatic Deserialization** - Runtime handles JSON parsing
+
+**How it works:**
+1. Register schema in Danube Schema Registry
+2. Create topic with `--schema-subject user-events-v1`
+3. Producer validates messages before sending
+4. Connector receives pre-validated, deserialized JSON
+
+**Example Schema (`user-events-v1`):**
+```json
+{
+  "type": "object",
+  "properties": {
+    "user_id": {"type": "string"},
+    "event_type": {"type": "string"},
+    "timestamp": {"type": "string", "format": "date-time"}
+  },
+  "required": ["user_id", "event_type"]
+}
+```
+
+**Stored in SurrealDB:**
 ```json
 {
   "user_id": "user-123",
@@ -155,44 +188,6 @@ schema_type = "Json"
   "timestamp": "2024-01-01T12:00:00Z"
 }
 ```
-
-**Stored as-is in SurrealDB**
-
-### String Schema
-
-For plain text messages:
-
-```toml
-schema_type = "String"
-```
-
-**Input:** `"System started successfully"`
-
-**Stored:** `{"data": "System started successfully"}`
-
-### Int64 Schema
-
-For numeric counters/metrics:
-
-```toml
-schema_type = "Int64"
-```
-
-**Input:** `42` (8 bytes, big-endian)
-
-**Stored:** `{"value": 42}`
-
-### Bytes Schema
-
-For binary data:
-
-```toml
-schema_type = "Bytes"
-```
-
-**Input:** Raw bytes `[0x01, 0x02, 0x03]`
-
-**Stored:** `{"data": "AQID", "size": 3}` (base64 encoded)
 
 ### Storage Modes
 
@@ -232,8 +227,9 @@ storage_mode = "TimeSeries"
 [[surrealdb.topic_mappings]]
 topic = "/iot/temperature"
 subscription = "surrealdb-iot"
+subscription_type = "Shared"
 table_name = "temperature_readings"
-schema_type = "Json"
+expected_schema_subject = "sensor-v1"
 storage_mode = "TimeSeries"  # Uses Danube publish_time
 batch_size = 500
 ```
@@ -408,9 +404,10 @@ docker logs -f surrealdb-sink
 
 ### Complete Working Example
 
-See **[examples/sink-surrealdb](../../examples/sink-surrealdb)** for a complete setup with:
-- Docker Compose (Danube + ETCD + SurrealDB)
-- Test producers using danube-cli
+See **[example/README.md](example/README.md)** for a complete setup with:
+- Docker Compose (Danube + ETCD + SurrealDB + Schema Registry)
+- Schema registration and validation
+- Test producers using danube-cli v0.6.1+
 - Single and multi-topic configurations
 - Query examples and monitoring
 
@@ -446,9 +443,37 @@ See **[examples/sink-surrealdb](../../examples/sink-surrealdb)** for a complete 
 └─────────────────┘
 ```
 
-### References
+## 🔧 Troubleshooting
+
+### Schema Validation Errors
+
+**Error:** `Schema validation failed`
+
+**Solution:**
+- Check schema is registered: `danube-admin-cli schemas list`
+- Verify message matches schema requirements
+- Ensure topic has correct `schema-subject` configured
+
+### Connection Issues
+
+**Error:** `Failed to connect to SurrealDB`
+
+**Solution:**
+- Verify SurrealDB is running: `curl http://localhost:8000/health`
+- Check connection URL format: `ws://host:port` or `http://host:port`
+- Verify credentials if authentication is enabled
+
+### No Data in SurrealDB
+
+**Solution:**
+- Check connector logs: `docker logs surrealdb-sink`
+- Verify messages are being sent to Danube
+- Check batch settings - data may be buffered
+- Confirm table name and namespace/database settings
+
+## 📚 References
 
 - [SurrealDB Documentation](https://surrealdb.com/docs)
-- [Danube Broker](https://github.com/danrusei/danube)
-- [Danube Connect Framework](https://github.com/danrusei/danube-connect)
-- [SurrealDB Rust SDK](https://docs.rs/surrealdb/latest/surrealdb/)
+- [Danube Messaging](https://github.com/danube-messaging/danube)
+- [Configuration Guide](config/README.md)
+- [Example Setup](example/README.md)

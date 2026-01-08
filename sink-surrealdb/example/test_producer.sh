@@ -43,11 +43,11 @@ if ! command -v ${DANUBE_CLI} &> /dev/null && [ ! -f "${DANUBE_CLI}" ]; then
     echo "   https://github.com/danube-messaging/danube/releases"
     echo ""
     echo "   # Linux"
-    echo "   wget https://github.com/danube-messaging/danube/releases/download/v0.5.2/danube-cli-linux"
+    echo "   wget https://github.com/danube-messaging/danube/releases/download/v0.6.1/danube-cli-linux"
     echo "   chmod +x danube-cli-linux"
     echo ""
     echo "   # macOS"
-    echo "   wget https://github.com/danube-messaging/danube/releases/download/v0.5.2/danube-cli-macos"
+    echo "   wget https://github.com/danube-messaging/danube/releases/download/v0.6.1/danube-cli-macos"
     echo "   chmod +x danube-cli-macos"
     echo ""
     echo "Or specify custom path:"
@@ -99,17 +99,24 @@ for i in $(seq 1 ${COUNT}); do
     product=${PRODUCTS[$RANDOM % ${#PRODUCTS[@]}]}
     amount=$((RANDOM % 1000 + 50))
     
+    # Generate unique event ID
+    event_id="evt_${i}_$(date +%s)_${RANDOM}"
+    timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    
     # Create JSON message based on event type
     case $event_type in
         "purchase")
             message=$(cat <<EOF
 {
+  "event_id": "${event_id}",
   "event_type": "purchase",
+  "timestamp": "${timestamp}",
   "user_id": "${user_id}",
-  "product": "${product}",
-  "amount": ${amount},
-  "currency": "USD",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  "data": {
+    "product": "${product}",
+    "amount": ${amount},
+    "currency": "USD"
+  }
 }
 EOF
 )
@@ -117,11 +124,14 @@ EOF
         "user_signup")
             message=$(cat <<EOF
 {
+  "event_id": "${event_id}",
   "event_type": "user_signup",
+  "timestamp": "${timestamp}",
   "user_id": "${user_id}",
-  "email": "${user_id}@example.com",
-  "source": "web",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  "data": {
+    "email": "${user_id}@example.com",
+    "source": "web"
+  }
 }
 EOF
 )
@@ -129,11 +139,14 @@ EOF
         "user_login")
             message=$(cat <<EOF
 {
+  "event_id": "${event_id}",
   "event_type": "user_login",
+  "timestamp": "${timestamp}",
   "user_id": "${user_id}",
-  "ip_address": "192.168.1.$((RANDOM % 255))",
-  "device": "desktop",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  "data": {
+    "ip_address": "192.168.1.$((RANDOM % 255))",
+    "device": "desktop"
+  }
 }
 EOF
 )
@@ -141,11 +154,14 @@ EOF
         "page_view")
             message=$(cat <<EOF
 {
+  "event_id": "${event_id}",
   "event_type": "page_view",
+  "timestamp": "${timestamp}",
   "user_id": "${user_id}",
-  "page": "/products/${product}",
-  "duration_ms": $((RANDOM % 60000)),
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  "data": {
+    "page": "/products/${product}",
+    "duration_ms": $((RANDOM % 60000))
+  }
 }
 EOF
 )
@@ -153,24 +169,28 @@ EOF
         "api_call")
             message=$(cat <<EOF
 {
+  "event_id": "${event_id}",
   "event_type": "api_call",
+  "timestamp": "${timestamp}",
   "user_id": "${user_id}",
-  "endpoint": "/api/v1/${product}",
-  "method": "GET",
-  "status_code": 200,
-  "response_time_ms": $((RANDOM % 500)),
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  "data": {
+    "endpoint": "/api/v1/${product}",
+    "method": "GET",
+    "status_code": 200,
+    "response_time_ms": $((RANDOM % 500))
+  }
 }
 EOF
 )
             ;;
     esac
     
-    # Send message using danube-cli
+    # Send message using danube-cli with schema validation
     if ${DANUBE_CLI} produce \
         --service-addr "${DANUBE_URL}" \
         --topic "${TOPIC}" \
         --message "$message" \
+        --schema-subject "events-v1" \
         --interval ${INTERVAL} \
         --reliable \
         > /dev/null 2>&1; then

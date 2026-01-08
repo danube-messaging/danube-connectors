@@ -6,7 +6,7 @@
 //! - Batch processing and performance tuning
 //! - Environment variable overrides
 
-use danube_connect_core::{ConnectorConfig, ConnectorError, ConnectorResult, SchemaType};
+use danube_connect_core::{ConnectorConfig, ConnectorError, ConnectorResult, SubscriptionType};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
@@ -82,12 +82,22 @@ pub struct TopicMapping {
     /// Danube subscription name
     pub subscription: String,
 
+    /// Subscription type: Exclusive, Shared, FailOver
+    #[serde(default = "default_subscription_type")]
+    pub subscription_type: SubscriptionType,
+
     /// SurrealDB table name to insert into
     pub table_name: String,
 
     /// Include Danube metadata in records (topic, offset, timestamp)
     #[serde(default = "default_include_metadata")]
     pub include_danube_metadata: bool,
+
+    /// Expected schema subject for validation (optional)
+    /// If set, the runtime validates and deserializes messages automatically
+    /// Schema must be registered in Danube Schema Registry
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_schema_subject: Option<String>,
 
     /// Custom batch size for this topic (overrides global)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -96,11 +106,6 @@ pub struct TopicMapping {
     /// Custom flush interval for this topic (overrides global)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub flush_interval_ms: Option<u64>,
-
-    /// Schema type for this topic (must match Danube topic schema)
-    /// Determines how to interpret and insert the payload
-    #[serde(default)]
-    pub schema_type: SchemaType,
 
     /// Storage mode: Document or TimeSeries
     #[serde(default)]
@@ -126,6 +131,10 @@ fn default_flush_interval_ms() -> u64 {
 
 fn default_include_metadata() -> bool {
     true
+}
+
+fn default_subscription_type() -> SubscriptionType {
+    SubscriptionType::Shared
 }
 
 impl Default for StorageMode {
@@ -265,11 +274,12 @@ mod tests {
                 topic_mappings: vec![TopicMapping {
                     topic: "/test/topic".to_string(),
                     subscription: "test-sub".to_string(),
+                    subscription_type: SubscriptionType::Shared,
                     table_name: "events".to_string(),
                     include_danube_metadata: true,
+                    expected_schema_subject: None,
                     batch_size: None,
                     flush_interval_ms: None,
-                    schema_type: SchemaType::Json,
                     storage_mode: StorageMode::Document,
                 }],
                 batch_size: 100,
@@ -311,21 +321,23 @@ mod tests {
                     TopicMapping {
                         topic: "/test/document".to_string(),
                         subscription: "test-doc".to_string(),
+                        subscription_type: SubscriptionType::Shared,
                         table_name: "documents".to_string(),
                         include_danube_metadata: true,
+                        expected_schema_subject: None,
                         batch_size: None,
                         flush_interval_ms: None,
-                        schema_type: SchemaType::Json,
                         storage_mode: StorageMode::Document,
                     },
                     TopicMapping {
                         topic: "/test/timeseries".to_string(),
                         subscription: "test-ts".to_string(),
+                        subscription_type: SubscriptionType::Shared,
                         table_name: "timeseries".to_string(),
                         include_danube_metadata: true,
+                        expected_schema_subject: None,
                         batch_size: None,
                         flush_interval_ms: None,
-                        schema_type: SchemaType::Json,
                         storage_mode: StorageMode::TimeSeries,
                     },
                 ],

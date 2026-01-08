@@ -12,7 +12,6 @@ use crate::record::{to_surrealdb_record, SurrealDBRecord};
 use async_trait::async_trait;
 use danube_connect_core::{
     ConnectorConfig, ConnectorError, ConnectorResult, ConsumerConfig, SinkConnector, SinkRecord,
-    SubscriptionType,
 };
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -146,14 +145,15 @@ impl SurrealDBSinkConnector {
             // Workaround: Use query parameters with cloned data
             // Clone is necessary because .bind() requires 'static lifetime
             let data = record.data.clone();
-            
+
             let result = match &record.id {
                 Some(id) => {
                     // Insert with specific record ID using query parameters
                     let thing = format!("{}:{}", table_name, id);
                     let query = format!("CREATE {} CONTENT $data", thing);
                     // Bind the data as a parameter - SurrealDB handles the serialization
-                    client.query(query)
+                    client
+                        .query(query)
                         .bind(("data", data))
                         .await
                         .map(|_| ())
@@ -163,7 +163,8 @@ impl SurrealDBSinkConnector {
                     // Auto-generate ID using query parameters
                     let query = format!("CREATE {} CONTENT $data", table_name);
                     // Bind the data as a parameter - SurrealDB handles the serialization
-                    client.query(query)
+                    client
+                        .query(query)
                         .bind(("data", data))
                         .await
                         .map(|_| ())
@@ -280,8 +281,8 @@ impl SinkConnector for SurrealDBSinkConnector {
                     self.config.core.connector_name, mapping.table_name
                 ),
                 subscription: mapping.subscription.clone(),
-                subscription_type: SubscriptionType::Shared,
-                expected_schema_subject: None, // No schema validation for SurrealDB sink (accepts any valid JSON)
+                subscription_type: mapping.subscription_type.clone(),
+                expected_schema_subject: mapping.expected_schema_subject.clone(),
             })
             .collect();
 
@@ -375,7 +376,7 @@ impl Default for SurrealDBSinkConnector {
 mod tests {
     use super::*;
     use crate::config::StorageMode;
-    use danube_connect_core::SchemaType;
+    use danube_connect_core::SubscriptionType;
     use serde_json::Value;
 
     #[test]
@@ -383,11 +384,12 @@ mod tests {
         let mapping = TopicMapping {
             topic: "/test/topic".to_string(),
             subscription: "test-sub".to_string(),
+            subscription_type: SubscriptionType::Shared,
             table_name: "events".to_string(),
             include_danube_metadata: false,
+            expected_schema_subject: None,
             batch_size: Some(10),
             flush_interval_ms: Some(5000),
-            schema_type: SchemaType::Json,
             storage_mode: StorageMode::Document,
         };
 
@@ -434,11 +436,12 @@ mod tests {
                 topic_mappings: vec![TopicMapping {
                     topic: "/test/topic".to_string(),
                     subscription: "test-sub".to_string(),
+                    subscription_type: SubscriptionType::Shared,
                     table_name: "events".to_string(),
                     include_danube_metadata: true,
+                    expected_schema_subject: None,
                     batch_size: None,
                     flush_interval_ms: None,
-                    schema_type: SchemaType::Json,
                     storage_mode: StorageMode::Document,
                 }],
                 batch_size: 100,
