@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SensorData",
+  "description": "IoT sensor telemetry data",
+  "type": "object",
+  "properties": {
+    "device_id": {
+      "type": "string",
+      "description": "Unique device identifier"
+    },
+    "sensor_type": {
+      "type": "string",
+      "enum": ["temperature", "humidity", "pressure", "light", "motion"],
+      "description": "Type of sensor"
+    },
+    "value": {
+      "type": "number",
+      "description": "Sensor reading value"
+    },
+    "unit": {
+      "type": "string",
+      "description": "Unit of measurement (e.g., celsius, percent, hPa, lux)"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Reading timestamp in ISO 8601 format"
+    },
+    "location": {
+      "type": "object",
+      "properties": {
+        "zone": {
+          "type": "string",
+          "description": "Zone identifier (e.g., zone1, zone2)"
+        },
+        "building": {
+          "type": "string",
+          "description": "Building identifier"
+        },
+        "floor": {
+          "type": "integer",
+          "description": "Floor number"
+        }
+      }
+    },
+    "battery_level": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Battery level percentage (0-100)"
+    },
+    "signal_strength": {
+      "type": "integer",
+      "description": "Signal strength in dBm"
+    }
+  },
+  "required": ["device_id", "sensor_type", "value", "timestamp"],
+  "additionalProperties": false
+}

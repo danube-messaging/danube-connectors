@@ -1,0 +1,53 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DeviceStatus",
+  "description": "Device health and status information",
+  "type": "object",
+  "properties": {
+    "device_id": {
+      "type": "string",
+      "description": "Unique device identifier"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["online", "offline", "error", "maintenance", "standby"],
+      "description": "Current device status"
+    },
+    "battery_level": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Battery level percentage (0-100)"
+    },
+    "uptime_seconds": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Device uptime in seconds"
+    },
+    "last_seen": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Last communication timestamp in ISO 8601 format"
+    },
+    "firmware_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Firmware version (semantic versioning)"
+    },
+    "ip_address": {
+      "type": "string",
+      "format": "ipv4",
+      "description": "Device IP address"
+    },
+    "error_code": {
+      "type": "integer",
+      "description": "Error code if status is 'error'"
+    },
+    "error_message": {
+      "type": "string",
+      "description": "Human-readable error message"
+    }
+  },
+  "required": ["device_id", "status", "last_seen"],
+  "additionalProperties": false
+}

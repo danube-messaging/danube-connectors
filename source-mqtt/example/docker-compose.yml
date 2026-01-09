@@ -99,7 +99,7 @@ services:
   mqtt-connector:
     build:
       context: ../../
-      dockerfile: connectors/source-mqtt/Dockerfile
+      dockerfile: source-mqtt/Dockerfile
     container_name: mqtt-example-connector
     depends_on:
       mosquitto:
@@ -109,6 +109,8 @@ services:
     volumes:
       # Mount TOML configuration file
       - ./connector.toml:/etc/connector.toml:ro
+      # Mount schema files for validation
+      - ./schemas:/etc/schemas:ro
     environment:
       # Required: Path to configuration file
       - CONNECTOR_CONFIG_PATH=/etc/connector.toml
@@ -147,19 +149,26 @@ services:
       - |
         echo "Waiting for MQTT broker to be ready..."
         sleep 5
-        echo "Starting to publish test messages..."
+        echo "Starting to publish test messages (schema-validated)..."
         while true; do
           temp=$$(shuf -i 10-40 -n 1)
           humidity=$$(shuf -i 40-80 -n 1)
           battery=$$(shuf -i 0-100 -n 1)
-          signal=$$(shuf -i 0-100 -n 1)
-          ts=$$(date +%s)
+          signal=$$((40 + RANDOM % 51))
+          signal=-$$signal
+          ts=$$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           
-          /usr/bin/mosquitto_pub -h mosquitto -t sensors/temp/zone1 -m "{\"temperature\":$$temp,\"unit\":\"celsius\",\"timestamp\":$$ts}"
-          /usr/bin/mosquitto_pub -h mosquitto -t sensors/humidity/zone1 -m "{\"humidity\":$$humidity,\"unit\":\"percent\",\"timestamp\":$$ts}"
-          /usr/bin/mosquitto_pub -h mosquitto -t devices/device001/telemetry -m "{\"battery\":$$battery,\"signal\":$$signal,\"timestamp\":$$ts}"
+          # Sensor data matching sensor-data.json schema
+          /usr/bin/mosquitto_pub -h mosquitto -t sensors/temp/zone1 -m "{\"device_id\":\"sensor-temp-001\",\"sensor_type\":\"temperature\",\"value\":$$temp,\"unit\":\"celsius\",\"timestamp\":\"$$ts\",\"battery_level\":$$battery}"
+          /usr/bin/mosquitto_pub -h mosquitto -t sensors/humidity/zone1 -m "{\"device_id\":\"sensor-hum-001\",\"sensor_type\":\"humidity\",\"value\":$$humidity,\"unit\":\"percent\",\"timestamp\":\"$$ts\",\"signal_strength\":$$signal}"
           
-          echo "[Publisher] Published 3 messages at $$(date +%T)"
+          # Device status matching device-status.json schema
+          /usr/bin/mosquitto_pub -h mosquitto -t devices/device001/telemetry -m "{\"device_id\":\"device001\",\"status\":\"online\",\"battery_level\":$$battery,\"uptime_seconds\":$$RANDOM,\"last_seen\":\"$$ts\",\"firmware_version\":\"1.2.3\"}"
+          
+          # Debug log (string schema - any text)
+          /usr/bin/mosquitto_pub -h mosquitto -t debug/app -m "Debug: System running normally, battery: $$battery%"
+          
+          echo "[Publisher] Published 4 messages at $$(date +%T) - Schema-validated"
           sleep 5
         done
 

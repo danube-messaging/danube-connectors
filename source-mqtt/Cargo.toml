@@ -1,6 +1,6 @@
 [package]
 name = "danube-source-mqtt"
-version = "0.1.4"
+version = "0.2.0"
 edition = "2021"
 authors = ["Danube Team"]
 description = "MQTT source connector for Danube Connect"
@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Danube integration
-danube-connect-core = "0.3.2"
+danube-connect-core = "0.4.0"
 
 # MQTT client (connector-specific)
 rumqttc = "0.25.1"

@@ -1,6 +1,7 @@
 //! MQTT source connector implementation.
 
 use crate::config::{MqttConfig, TopicMapping};
+use danube_connect_core::SchemaMapping;
 use async_trait::async_trait;
 use danube_connect_core::{
     ConnectorConfig, ConnectorError, ConnectorResult, Offset, SourceConnector, SourceRecord,
@@ -14,6 +15,7 @@ use tracing::{debug, error, info, warn};
 /// Subscribes to MQTT topics and publishes messages to Danube topics.
 pub struct MqttSourceConnector {
     config: MqttConfig,
+    schemas: Vec<SchemaMapping>,
     mqtt_client: Option<AsyncClient>,
     message_rx: Option<Receiver<SourceRecord>>,
     offset_counter: u64,
@@ -21,9 +23,10 @@ pub struct MqttSourceConnector {
 
 impl MqttSourceConnector {
     /// Create a new MQTT source connector with provided configuration
-    pub fn with_config(config: MqttConfig) -> Self {
+    pub fn with_config(config: MqttConfig, schemas: Vec<SchemaMapping>) -> Self {
         Self {
             config,
+            schemas,
             mqtt_client: None,
             message_rx: None,
             offset_counter: 0,
@@ -49,6 +52,7 @@ impl MqttSourceConnector {
                 include_metadata: true,
                 tcp_nodelay: true,
             },
+            schemas: vec![],
             mqtt_client: None,
             message_rx: None,
             offset_counter: 0,
@@ -224,6 +228,22 @@ impl MqttSourceConnector {
             mapping.mqtt_topic == mqtt_topic || Self::topic_matches(&mapping.mqtt_topic, mqtt_topic)
         })
     }
+    
+    /// Find schema configuration for a Danube topic
+    fn find_schema_config(&self, danube_topic: &str) -> Option<danube_connect_core::SchemaConfig> {
+        self.schemas.iter()
+            .find(|s| s.topic == danube_topic)
+            .map(|schema| {
+                // Convert SchemaMapping to SchemaConfig
+                danube_connect_core::SchemaConfig {
+                    subject: schema.subject.clone(),
+                    schema_type: schema.schema_type.clone(),
+                    schema_file: schema.schema_file.clone(),
+                    auto_register: schema.auto_register,
+                    version_strategy: schema.version_strategy.clone(),
+                }
+            })
+    }
 }
 
 impl Default for MqttSourceConnector {
@@ -309,11 +329,16 @@ impl SourceConnector for MqttSourceConnector {
             .config
             .topic_mappings
             .iter()
-            .map(|mapping| danube_connect_core::ProducerConfig {
-                topic: mapping.danube_topic.clone(),
-                partitions: mapping.partitions,
-                reliable_dispatch: mapping.effective_reliable_dispatch(),
-                schema_config: None, // No schema registry for MQTT source (uses auto-detection)
+            .map(|mapping| {
+                // Find matching schema configuration for this Danube topic
+                let schema_config = self.find_schema_config(&mapping.danube_topic);
+                
+                danube_connect_core::ProducerConfig {
+                    topic: mapping.danube_topic.clone(),
+                    partitions: mapping.partitions,
+                    reliable_dispatch: mapping.effective_reliable_dispatch(),
+                    schema_config,
+                }
             })
             .collect();
 

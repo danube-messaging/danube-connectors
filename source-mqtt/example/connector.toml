@@ -129,6 +129,54 @@ partitions = 0               # Non-partitioned
 # ============================================================================
 
 # ============================================================================
+# Schema Registry Configuration (Enabled for Testing)
+# ============================================================================
+# The Danube broker has a built-in schema registry.
+# danube-connect-core automatically handles schema registration and validation.
+# Schemas auto-register when connector starts if auto_register = true.
+# ============================================================================
+
+# JSON Schema validation for sensor zone1 data
+[[schemas]]
+topic = "/iot/sensors_zone1"
+subject = "sensor-telemetry-v1"
+schema_type = "json_schema"
+schema_file = "/etc/schemas/sensor-data.json"
+auto_register = true
+version_strategy = "latest"
+
+# JSON Schema for device telemetry
+[[schemas]]
+topic = "/iot/device_telemetry"
+subject = "device-telemetry-v1"
+schema_type = "json_schema"
+schema_file = "/etc/schemas/device-status.json"
+auto_register = true
+version_strategy = "latest"
+
+# String schema for debug logs (no schema file needed)
+[[schemas]]
+topic = "/iot/debug"
+subject = "debug-logs"
+schema_type = "string"
+schema_file = ""
+auto_register = true
+version_strategy = "latest"
+
+# ============================================================================
+# Schema Types:
+# - json_schema: Requires schema_file path: schema_file = "/etc/schemas/sensor-data.json"
+# - string:      Use empty string:         schema_file = ""
+# - bytes:       Use empty string:         schema_file = ""
+# - number:      Use empty string:         schema_file = ""
+#
+# Version Strategies:
+# - "latest":           Always use newest version
+# - { pinned = 2 }:     Lock to version 2 (production stability)
+# - { minimum = 1 }:    Use version >= 1 (backward compatible updates)
+# ============================================================================
+
+# ============================================================================
 # Environment Variable Overrides
 # ============================================================================
 # Environment variables are used ONLY for secrets and environment-specific values:

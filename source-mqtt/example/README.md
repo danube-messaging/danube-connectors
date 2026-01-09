@@ -1,38 +1,72 @@
-# MQTT Source Connector - Integration Testing
+# MQTT Source Connector - Schema Validation Testing
 
-This example demonstrates end-to-end integration testing of the MQTT Source Connector, showing how MQTT messages flow into Danube.
+This example demonstrates end-to-end **schema validation testing** of the MQTT Source Connector with Danube's built-in Schema Registry.
+
+## ⚡ Key Features
+
+- ✅ **3 Schemas Enabled** - Auto-register and validate on startup
+- ✅ **Schema Registry Built-In** - No separate service needed
+- ✅ **Automated Testing** - Test publisher sends compliant messages every 5s
+- ✅ **Real Validation** - See valid/invalid messages handled differently
+- ✅ **Production-Ready** - Same setup you'd use in production
 
 ## 🎯 What This Tests
 
-- MQTT broker → Connector → Danube broker pipeline
+- **Schema Registry Integration** - Auto-registration and validation
+- **JSON Schema Validation** - Structured data validation (sensor-data.json, device-status.json)
+- **String Schema** - Plain text validation
+- **MQTT → Connector → Danube pipeline** - Complete data flow
 - Topic mapping and wildcards
 - Message transformation and metadata
 - QoS handling
+- Valid vs. Invalid message handling
 
-### Data Flow
+### Data Flow (With Schema Validation)
 
 ```
-MQTT Publisher (test messages)
+MQTT Publisher (schema-compliant messages)
     ↓
 Mosquitto MQTT Broker
     ↓ Subscribe
 MQTT Source Connector
-    ↓ Publish  
-Danube Broker (/iot/sensors topic)
+    ↓ Transform to SourceRecord
+danube-connect-core Runtime
+    ├─ Validates against JSON Schema
+    ├─ ✅ Valid: Serialize & publish
+    └─ ❌ Invalid: Reject & log error
+    ↓
+Danube Broker (with Schema Registry)
+    ├─ /iot/sensors_zone1 (validated)
+    ├─ /iot/device_telemetry (validated)
+    ├─ /iot/debug (string, any text)
+    └─ /iot/temperature (no schema)
     ↓ danube-cli consumer
-Your terminal
+Your terminal (validated data)
 ```
 
 ## 📁 Files in This Example
 
-- **`docker-compose.yml`** - Orchestrates the complete test stack (etcd, Danube, Mosquitto, connector)
-- **`connector.toml`** - MQTT connector configuration with topic mappings and settings
+**Configuration:**
+- **`connector.toml`** - Connector config with **3 schemas enabled** for validation testing
+- **`docker-compose.yml`** - Complete stack (etcd, Danube, Mosquitto, connector, test publisher)
 - **`danube_broker.yml`** - Danube broker configuration
-- **`mosquitto.conf`** - MQTT broker configuration (listeners, logging)
-- **`test-publisher.sh`** - Automated test script to publish sample MQTT messages
-- **`README.md`** - This file (integration testing guide)
+- **`mosquitto.conf`** - MQTT broker configuration
+
+**Schema Files (schemas/):**
+- **`sensor-data.json`** - JSON Schema for IoT sensor telemetry (temperature, humidity, etc.)
+- **`device-status.json`** - JSON Schema for device health/status information
+
+**Testing:**
+- **`test-publisher.sh`** - Publishes schema-compliant messages every 5 seconds
+- **`SCHEMA_TESTING.md`** - Detailed schema validation testing guide
+- **`README.md`** - This file (quick start guide)
 
 ## 🚀 Quick Start (5 Minutes)
+
+> **💡 This example is pre-configured for schema validation testing!**  
+> - 3 schemas are **enabled** and will auto-register
+> - Test publisher sends **schema-compliant** messages
+> - You'll see validation in action in the logs
 
 ### Prerequisites
 
@@ -43,22 +77,27 @@ Your terminal
 ### 1. Start Everything
 
 ```bash
-cd examples/source-mqtt
+cd source-mqtt/example
 docker-compose up -d
 ```
 
 This starts:
-- etcd (Danube's metadata store)
-- Danube broker
-- Mosquitto MQTT broker
-- MQTT source connector
-- Test message publisher
+- **etcd** - Danube's metadata store
+- **danube-broker** - Message broker with built-in Schema Registry
+- **mosquitto** - MQTT broker
+- **mqtt-connector** - Source connector with schema validation enabled
+- **mqtt-test-publisher** - Publishes schema-compliant messages every 5 seconds
 
 ### 2. Watch the Logs
 
 ```bash
-# Watch connector logs
+# Watch connector logs (with schema auto-registration)
 docker logs -f mqtt-example-connector
+
+# You should see:
+# - Schema auto-registration messages
+# - Schema validation in action
+# - Messages being published to Danube
 
 # Watch test publisher
 docker logs -f mqtt-example-publisher
@@ -70,33 +109,118 @@ docker logs -f danube-broker
 docker logs -f mqtt-example-broker
 ```
 
-You should see messages flowing:
+Expected connector output:
 ```
-[DEBUG] Received MQTT message: topic=sensors/temp/zone1, qos=0, size=58
-[INFO] Polled 3 records
-[DEBUG] Committed 3 offsets
+[INFO] Configuration loaded and validated successfully
+[INFO] Schemas configured: 3
+[INFO] Topic Mappings: 4 configured
+[INFO] Schema auto-registering: sensor-telemetry-v1
+[INFO] Schema auto-registering: device-telemetry-v1  
+[INFO] Schema auto-registering: debug-logs
+[DEBUG] Received MQTT message: topic=sensors/temp/zone1, qos=0
+[INFO] Polled 4 records
+[DEBUG] Committed 4 offsets
 ```
 
-### 3. Publish Your Own Messages
+## 📊 Configured Schemas
+
+This example has **3 schemas configured** in `connector.toml`:
+
+| Danube Topic | Schema Subject | Type | Schema File | Validation |
+|--------------|---------------|------|-------------|------------|
+| `/iot/sensors_zone1` | `sensor-telemetry-v1` | JSON Schema | `/etc/schemas/sensor-data.json` | ✅ Validates structure & types |
+| `/iot/device_telemetry` | `device-telemetry-v1` | JSON Schema | `/etc/schemas/device-status.json` | ✅ Validates structure & types |
+| `/iot/debug` | `debug-logs` | String | `""` (empty) | ✅ Any text accepted |
+| `/iot/temperature` | - | None | N/A | ❌ No validation |
+
+**Schema file patterns:**
+- **JSON Schema**: Requires path to `.json` file: `schema_file = "/etc/schemas/sensor-data.json"`
+- **String/Number/Bytes**: Use empty string: `schema_file = ""`
+
+**How it works:**
+1. **Connector starts** → Reads schema files from `/etc/schemas/`
+2. **Auto-registers** → Schemas registered with Danube broker's schema registry
+3. **Validates messages** → Runtime validates each message before publishing
+4. **Rejects invalid** → Messages that don't match schema are logged and rejected
+
+See [`SCHEMA_TESTING.md`](./SCHEMA_TESTING.md) for detailed validation testing guide.
+
+### 3. Test Schema Validation
+
+**Test with VALID messages (matches schema):**
 
 ```bash
-# Temperature reading
+# Valid sensor data (sensor-data.json schema)
 docker exec mqtt-example-broker mosquitto_pub \
-  -t sensors/temp/zone2 \
-  -m '{"temperature": 25.5, "unit": "celsius"}'
+  -t sensors/temp/zone1 \
+  -m '{
+    "device_id": "sensor-001",
+    "sensor_type": "temperature",
+    "value": 23.5,
+    "unit": "celsius",
+    "timestamp": "2024-01-09T20:30:00Z"
+  }'
 
-# Device telemetry
+# Valid device status (device-status.json schema)
 docker exec mqtt-example-broker mosquitto_pub \
-  -t devices/mydevice/telemetry \
-  -m '{"battery": 87, "signal": 95}'
+  -t devices/device001/telemetry \
+  -m '{
+    "device_id": "device001",
+    "status": "online",
+    "battery_level": 87,
+    "uptime_seconds": 3600,
+    "last_seen": "2024-01-09T20:30:00Z",
+    "firmware_version": "1.2.3"
+  }'
 
-# Pressure sensor
+# Valid debug log (string schema - accepts any text)
 docker exec mqtt-example-broker mosquitto_pub \
-  -t sensors/pressure/factory1 \
-  -m '{"pressure": 101.3, "unit": "kPa"}'
+  -t debug/test \
+  -m 'This is a debug message - any text is valid'
 ```
 
-### 4. Subscribe to MQTT Topics
+**Test with INVALID messages (schema validation fails):**
+
+```bash
+# INVALID: Missing required fields
+docker exec mqtt-example-broker mosquitto_pub \
+  -t sensors/temp/zone1 \
+  -m '{"value": 23.5}'
+# Expected: Schema validation error in connector logs
+
+# INVALID: Wrong sensor_type (not in enum)
+docker exec mqtt-example-broker mosquitto_pub \
+  -t sensors/temp/zone1 \
+  -m '{
+    "device_id": "sensor-001",
+    "sensor_type": "INVALID_TYPE",
+    "value": 23.5,
+    "timestamp": "2024-01-09T20:30:00Z"
+  }'
+# Expected: Schema validation error
+
+# INVALID: Wrong data type
+docker exec mqtt-example-broker mosquitto_pub \
+  -t devices/device001/telemetry \
+  -m '{
+    "device_id": "device001",
+    "status": "online",
+    "battery_level": "not-a-number",
+    "last_seen": "2024-01-09T20:30:00Z"
+  }'
+# Expected: Schema validation error
+```
+
+### 4. Publish to Topics Without Schemas
+
+```bash
+# Temperature topic (no schema configured) - accepts any format
+docker exec mqtt-example-broker mosquitto_pub \
+  -t sensors/temp/other \
+  -m '{"temperature": 25.5, "any": "format", "works": true}'
+```
+
+### 5. Subscribe to MQTT Topics
 
 ```bash
 # See all sensor messages
@@ -106,7 +230,7 @@ docker exec mqtt-example-broker mosquitto_sub -t 'sensors/#' -v
 docker exec mqtt-example-broker mosquitto_sub -t 'devices/+/telemetry' -v
 ```
 
-### 5. Consume from Danube
+### 6. Consume from Danube
 
 To verify messages are reaching Danube, consume them using **danube-cli**.
 
@@ -191,43 +315,80 @@ danube-cli consume \
 # Message received: {"temperature":22,"unit":"celsius","timestamp":1734539835}
 ```
 
-### 6. Stop Everything
+### 7. Stop Everything
 
 ```bash
 docker-compose down
 ```
 
-## Automated Load Testing
+## 📡 Test Publisher (Automated)
 
-Use `test-publisher.sh` to continuously publish sample messages:
+The `mqtt-test-publisher` container **automatically** publishes schema-compliant messages every 5 seconds:
 
+**Messages published:**
+
+1. **sensors/temp/zone1** → `/iot/sensors_zone1` (✅ JSON Schema validated)
+   ```json
+   {
+     "device_id": "sensor-temp-001",
+     "sensor_type": "temperature",
+     "value": 22,
+     "unit": "celsius",
+     "timestamp": "2024-01-09T20:30:00Z",
+     "battery_level": 75
+   }
+   ```
+
+2. **sensors/humidity/zone1** → `/iot/sensors_zone1` (✅ JSON Schema validated)
+   ```json
+   {
+     "device_id": "sensor-hum-001",
+     "sensor_type": "humidity",
+     "value": 65,
+     "unit": "percent",
+     "timestamp": "2024-01-09T20:30:00Z",
+     "signal_strength": -45
+   }
+   ```
+
+3. **devices/device001/telemetry** → `/iot/device_telemetry` (✅ JSON Schema validated)
+   ```json
+   {
+     "device_id": "device001",
+     "status": "online",
+     "battery_level": 87,
+     "uptime_seconds": 3600,
+     "last_seen": "2024-01-09T20:30:00Z",
+     "firmware_version": "1.2.3"
+   }
+   ```
+
+4. **debug/app** → `/iot/debug` (✅ String schema, any text)
+   ```
+   "Debug: System running normally, battery: 75%"
+   ```
+
+All messages are **schema-compliant** and will pass validation!
+
+Watch the publisher logs:
 ```bash
-# Make script executable
-chmod +x test-publisher.sh
-
-# Start automated publishing (sends temp, humidity, pressure, telemetry every 5s)
-./test-publisher.sh
+docker logs -f mqtt-test-publisher
 
 # Output:
-# [10:30:15] Published batch #1: temp=22°C, humidity=65%, pressure=1013hPa, battery=78%
-# [10:30:20] Published batch #2: temp=25°C, humidity=58%, pressure=1009hPa, battery=82%
-# ...
-
-# In another terminals, consume from Danube
-danube-cli consume   --service-addr http://localhost:6650   --topic /iot/temperature   --subscription telemetry-sub
-
-danube-cli consume   --service-addr http://localhost:6650   --topic /iot/sensors_zone1   --subscription telemetry-sub
-
-danube-cli consume   --service-addr http://localhost:6650   --topic /iot/device_telemetry   --subscription telemetry-sub
-
-# Press Ctrl+C to stop the publisher
+# [20:30:15] Published 4 messages at 20:30:15 - Schema-validated
+# [20:30:20] Published 4 messages at 20:30:20 - Schema-validated
 ```
 
-This script simulates:
-- Temperature sensors (`sensors/temp/zone1`)
-- Humidity sensors (`sensors/humidity/zone1`)
-- Pressure sensors (`sensors/pressure/factory1`)
-- Device telemetry (`devices/device001/telemetry`)
+## 🧪 Manual Load Testing
+
+For custom testing, use `test-publisher.sh`:
+
+```bash
+chmod +x test-publisher.sh
+./test-publisher.sh
+
+# Press Ctrl+C to stop
+```
 
 ## 🔍 Troubleshooting
 
@@ -247,7 +408,19 @@ docker-compose restart mqtt-example-connector
 
 ## 📚 Related Documentation
 
-- [MQTT Connector Development Guide](../../connectors/source-mqtt/DEVELOPMENT.md)
-- [MQTT Connector README](../../connectors/source-mqtt/README.md)
+**This Example:**
+- **[SCHEMA_TESTING.md](./SCHEMA_TESTING.md)** - Detailed schema validation testing guide
+- [test-publisher.sh](./test-publisher.sh) - Manual testing script
+
+**Connector Documentation:**
+- [MQTT Source Connector README](../README.md)
+- [Source Connector Development Guide](https://danube-docs.dev-state.com/integrations/source_connector_development/)
+
+**Danube Documentation:**
+- [Schema Registry Guide](https://danube-docs.dev-state.com/schema_registry/)
 - [danube-cli Documentation](https://danube-docs.dev-state.com/danube_clis/danube_cli/consumer/)
 - [danube-cli Releases](https://github.com/danube-messaging/danube/releases)
+
+**Configuration Examples:**
+- [connector.toml](./connector.toml) - Schema validation enabled (this example)
+- [connector-with-schemas.toml](../config/connector-with-schemas.toml) - Advanced multi-schema example

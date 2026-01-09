@@ -180,9 +180,9 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
 name = "danube-client"
-version = "0.5.2"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4349df71bf4dfd377b7b91abfadc42bddaddbcaf881928a664e0eb7e7623cfaf"
+checksum = "518f7dd50bf5033d6254e460bd3eefbc643f1291695b626d6c9d4d730039c935"
 dependencies = [
  "base64",
  "danube-core",
@@ -191,7 +191,7 @@ dependencies = [
  "rand",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.17",
  "tokio",
  "tokio-stream",
  "tonic",
@@ -201,9 +201,9 @@ dependencies = [
 
 [[package]]
 name = "danube-connect-core"
-version = "0.3.2"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27c905e21abbe3a977224906e8d0c6f2382033dd43dd9a4481b21c264f924987"
+checksum = "a023cdb3da669277d27d694f6ba93c42855c49ea4cfc4ec84c0d7a060a88b7e0"
 dependencies = [
  "async-trait",
  "base64",
@@ -222,15 +222,15 @@ dependencies = [
 
 [[package]]
 name = "danube-core"
-version = "0.5.2"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56559cf052a60ccddfbb3872e4ef0dcbbdf170c07a4831a95aac57e8a77a1c62"
+checksum = "7d5efb79f6ea09254d843f9f025a19b52e4f13c9eefbddb31bbd0d5320582e8b"
 dependencies = [
  "async-trait",
  "futures-core",
  "prost",
  "serde",
- "thiserror 1.0.69",
+ "thiserror 2.0.17",
  "tokio",
  "tonic",
  "tonic-prost",
@@ -239,7 +239,7 @@ dependencies = [
 
 [[package]]
 name = "danube-source-mqtt"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",

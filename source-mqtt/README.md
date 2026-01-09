@@ -8,11 +8,9 @@ A high-performance MQTT source connector that bridges MQTT-based IoT devices wit
 - 🎯 **Wildcard Subscriptions** - `+` (single-level) and `#` (multi-level) patterns
 - 📊 **All QoS Levels** - QoS 0 (fire-and-forget), QoS 1 (at-least-once), QoS 2 (exactly-once)
 - 🔄 **Flexible Topic Routing** - Multiple MQTT patterns → Danube topics with per-topic configuration
+- 🔒 **Schema Registry Support** - JSON Schema validation with auto-registration (v0.2.0+)
 - 📝 **Metadata Preservation** - MQTT attributes (topic, QoS, retain, dup) as message attributes
-- 📦 **Partitioned Topics** - Per-topic partition configuration for parallel processing
 - 🛡️ **Reliable Dispatch** - Automatic QoS-based reliable delivery to Danube
-- 🔐 **Authentication** - Username/password and TLS support
-- ⚡ **High Performance** - Async I/O with TCP_NODELAY enabled
 
 **Use Cases:** Industrial IoT, smart devices, edge computing, sensor networks, fleet management
 
@@ -35,16 +33,17 @@ docker run -d \
 
 **Note:** All structural configuration (topic mappings, QoS, partitions) must be in `connector.toml`. See [Configuration](#configuration) section below.
 
-### Complete Example
+### Complete Example with Schema Validation
 
-For a complete working setup with Docker Compose, MQTT broker, test publishers, and step-by-step guide:
+For a complete working setup with Docker Compose, MQTT broker, schema validation, and step-by-step guide:
 
-👉 **See [examples/source-mqtt](../../examples/source-mqtt/README.md)**
+👉 **See [example/README.md](example/README.md)**
 
 The example includes:
+- **Schema Registry Integration** - 3 schemas configured and auto-registered
 - Docker Compose setup (Danube + ETCD + Mosquitto MQTT)
-- Pre-configured connector.toml
-- Test message publishers
+- Schema-validated test publishers (JSON Schema + String schema)
+- Pre-configured connector.toml with schemas
 - Consuming messages with danube-cli
 
 ## ⚙️ Configuration
@@ -85,6 +84,15 @@ mqtt_topic = "devices/+/telemetry"
 danube_topic = "/iot/device_telemetry"
 qos = "AtLeastOnce"
 partitions = 2
+
+# Optional: Schema validation (v0.2.0+)
+[[schemas]]
+topic = "/iot/sensors_zone1"
+subject = "sensor-telemetry-v1"
+schema_type = "json_schema"
+schema_file = "schemas/sensor-data.json"  # Path to JSON Schema file
+auto_register = true
+version_strategy = "latest"
 ```
 
 #### Environment Variable Overrides
@@ -102,6 +110,10 @@ Environment variables can override **only secrets and connection URLs**:
 | `MQTT_USERNAME` | MQTT username (secret) | `prod_user` |
 | `MQTT_PASSWORD` | MQTT password (secret) | `${VAULT_PASSWORD}` |
 | `MQTT_USE_TLS` | Enable TLS | `true` |
+
+**Note:** For schema validation examples, see:
+- **[example/connector.toml](example/connector.toml)** - Basic example with 3 schemas
+- **[config/connector-with-schemas.toml](config/connector-with-schemas.toml)** - Advanced multi-schema example
 
 See [config/README.md](config/README.md) for complete configuration documentation.
 
@@ -154,40 +166,53 @@ These attributes are queryable in Danube consumers and useful for filtering, rou
 
 ## 📚 Documentation
 
-### Complete Working Example
+### Complete Working Example with Schema Validation
 
-See **[examples/source-mqtt](../../examples/source-mqtt)** for a complete setup with:
+See **[example/README.md](example/README.md)** for a complete setup with:
+- **Schema Registry Integration** - JSON Schema + String validation
 - Docker Compose (Danube + ETCD + Mosquitto MQTT)
-- Test message publishers
+- Schema-validated test publishers
 - Step-by-step testing guide
+- Valid vs. Invalid message testing
 - Consuming messages with danube-cli
 
 ### Configuration Examples
 
+- **[example/connector.toml](example/connector.toml)** - Working example with 3 schemas
+- **[config/connector-with-schemas.toml](config/connector-with-schemas.toml)** - Advanced multi-schema example
 - **[config/connector.toml](config/connector.toml)** - Fully documented reference configuration
 - **[config/README.md](config/README.md)** - Complete configuration guide
 
 ### How It Works
 
 ```
-MQTT Broker → Connector subscribes to topics → Routes to Danube topics
-                ↓                                        ↓
-       Topic pattern matching                   Message + Metadata
-         (wildcards supported)                  (MQTT attributes preserved)
+MQTT Broker → Connector subscribes → Validates (optional) → Publishes to Danube
+                    ↓                        ↓                      ↓
+           Topic pattern matching    Schema validation      Message + Metadata
+            (wildcards supported)    (JSON Schema, etc.)   (MQTT attributes)
 ```
 
 **Message Flow:**
 1. Connector subscribes to configured MQTT topic patterns (e.g., `sensors/#`, `devices/+/telemetry`)
 2. Receives messages from MQTT broker via rumqttc client
 3. Matches MQTT topic against configured patterns (first match wins)
-4. Routes to corresponding Danube topic with metadata
-5. Commits offset after successful Danube publish
+4. Validates against schema if configured (rejects invalid messages)
+5. Routes to corresponding Danube topic with metadata
+6. Commits offset after successful Danube publish
+
+**Schema Validation (v0.2.0+):**
+- Configure schemas per Danube topic for data quality
+- Supports JSON Schema, String, Bytes, and Number types
+- Auto-registers schemas with Danube's built-in schema registry
+- Invalid messages are rejected and logged
+- See [example/README.md](example/README.md) for schema validation testing
 
 ### References
 
+- **[Schema Validation Example](example/README.md)** - Working schema registry integration
 - **[Configuration Guide](config/README.md)** - Complete configuration reference
-- **[Working Example](../../examples/source-mqtt)** - Docker Compose setup
-- **[Development Guide](./DEVELOPMENT.md)** - Build, test, and contribute
+- **[Schema Testing Guide](example/SCHEMA_TESTING.md)** - Detailed schema validation testing
+- [Source Connector Development](https://danube-docs.dev-state.com/integrations/source_connector_development/)
 - [MQTT 3.1.1 Specification](https://docs.oasis-open.org/mqtt/mqtt/v3.1.1/mqtt-v3.1.1.html)
 - [rumqttc Client](https://github.com/bytebeamio/rumqtt)
 - [Danube Messaging](https://github.com/danrusei/danube)

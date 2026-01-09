@@ -1,0 +1,166 @@
+# =============================================================================
+# MQTT Source Connector - Advanced Schema Validation Example
+# =============================================================================
+# This configuration demonstrates schema registry integration (v0.2.0+)
+# Shows 5 different schema types and validation strategies:
+#   - 2x JSON Schema (sensor-data, device-status)
+#   - 1x String schema (device logs)
+#   - 1x Bytes schema (binary telemetry)
+#   - 1x Number schema (numeric metrics)
+#   - 1x No schema (debug messages - backward compatible)
+# =============================================================================
+
+# Core Danube settings
+danube_service_url = "http://danube-broker:6650"
+connector_name = "mqtt-schema-example"
+
+[processing]
+batch_size = 100
+poll_interval_ms = 100
+metrics_port = 9090
+
+# MQTT connection settings
+[mqtt]
+broker_host = "mosquitto"
+broker_port = 1883
+client_id = "mqtt-schema-connector"
+clean_session = true
+include_metadata = true
+
+# =============================================================================
+# Topic Mappings with Schema Validation
+# =============================================================================
+
+# 1. Structured sensor data with JSON Schema validation
+[[mqtt.topic_mappings]]
+mqtt_topic = "sensors/#"
+danube_topic = "/iot/sensors"
+qos = "AtLeastOnce"
+partitions = 8
+
+[[schemas]]
+topic = "/iot/sensors"
+subject = "sensor-telemetry-v1"
+schema_type = "json_schema"
+schema_file = "example/schemas/sensor-data.json"
+auto_register = true
+version_strategy = "latest"
+
+# 2. Device status with JSON Schema validation
+[[mqtt.topic_mappings]]
+mqtt_topic = "devices/+/status"
+danube_topic = "/iot/status"
+qos = "AtLeastOnce"
+partitions = 4
+
+[[schemas]]
+topic = "/iot/status"
+subject = "device-status-v1"
+schema_type = "json_schema"
+schema_file = "example/schemas/device-status.json"
+auto_register = true
+version_strategy = "latest"
+
+# 3. Device logs as plain text (string schema, empty schema_file)
+[[mqtt.topic_mappings]]
+mqtt_topic = "devices/+/logs"
+danube_topic = "/iot/logs"
+qos = "AtMostOnce"
+partitions = 1
+
+[[schemas]]
+topic = "/iot/logs"
+subject = "device-logs"
+schema_type = "string"
+schema_file = ""
+auto_register = true
+version_strategy = "latest"
+
+# 4. Binary telemetry data (bytes schema, empty schema_file)
+[[mqtt.topic_mappings]]
+mqtt_topic = "devices/+/binary"
+danube_topic = "/iot/binary"
+qos = "AtLeastOnce"
+partitions = 4
+
+[[schemas]]
+topic = "/iot/binary"
+subject = "binary-telemetry"
+schema_type = "bytes"
+schema_file = ""
+auto_register = true
+version_strategy = "latest"
+
+# 5. Numeric metrics (number schema, empty schema_file)
+[[mqtt.topic_mappings]]
+mqtt_topic = "metrics/+"
+danube_topic = "/iot/metrics"
+qos = "AtLeastOnce"
+partitions = 2
+
+[[schemas]]
+topic = "/iot/metrics"
+subject = "device-metrics"
+schema_type = "number"
+schema_file = ""
+auto_register = true
+version_strategy = "latest"
+
+# 6. Debug messages WITHOUT schema validation (backward compatible)
+[[mqtt.topic_mappings]]
+mqtt_topic = "debug/#"
+danube_topic = "/iot/debug"
+qos = "AtMostOnce"
+partitions = 1
+# No [[schemas]] entry = no validation, works as before
+
+# =============================================================================
+# Schema Version Strategies Examples
+# =============================================================================
+
+# Latest (default) - Always use newest version
+# version_strategy = "latest"
+
+# Pinned - Lock to specific version for production stability
+# version_strategy = { pinned = 2 }
+
+# Minimum - Use version >= specified (supports backward compatible updates)
+# version_strategy = { minimum = 1 }
+
+# =============================================================================
+# Schema Types Summary
+# =============================================================================
+#
+# json_schema:
+#   - Requires schema_file pointing to JSON Schema definition
+#   - schema_file = "path/to/schema.json"
+#   - Full validation of structure, types, required fields
+#   - Best for: Structured IoT data, events, complex objects
+#
+# string:
+#   - Use empty string: schema_file = ""
+#   - Plain UTF-8 text validation
+#   - Best for: Log messages, plain text, simple strings
+#
+# bytes:
+#   - Use empty string: schema_file = ""
+#   - Binary data (base64 encoded in JSON, raw in protobuf)
+#   - Best for: Images, binary formats, encrypted data
+#
+# number:
+#   - Use empty string: schema_file = ""
+#   - Numeric values (integers, floats)
+#   - Best for: Metrics, counters, sensor readings
+#
+# =============================================================================
+# Benefits of Schema Validation
+# =============================================================================
+#
+# ✅ Data Quality: Invalid messages rejected at source
+# ✅ Type Safety: Guaranteed message structure
+# ✅ Schema Evolution: Managed versioning with compatibility
+# ✅ Consumer Confidence: Downstream systems get clean data
+# ✅ Documentation: Schema serves as API contract
+# ✅ Runtime Managed: No custom validation logic needed
+#
+# =============================================================================

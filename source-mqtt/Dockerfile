@@ -1,5 +1,5 @@
 # Build stage
-FROM rust:1.91 as builder
+FROM rust:1.91-bookworm as builder
 
 # Install protobuf compiler (required for danube-core gRPC compilation)
 RUN apt-get update && apt-get install -y \
@@ -8,25 +8,12 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /usr/src/app
 
-# Copy workspace configuration (single source of truth)
-COPY Cargo.toml Cargo.lock ./
-
 # Copy only the dependencies we need to build
-COPY danube-connect-core ./danube-connect-core
-COPY connectors/source-mqtt ./connectors/source-mqtt
-
-# Filter workspace members to only include what we copied
-# This keeps [workspace.dependencies] intact (single source of truth)
-# but removes references to missing connectors
-RUN sed -i '/members = \[/,/\]/c\
-members = [\
-    "danube-connect-core",\
-    "connectors/source-mqtt",\
-]' Cargo.toml
+COPY source-mqtt ./source-mqtt
 
 # Build the connector
-WORKDIR /usr/src/app
-RUN cargo build --package danube-source-mqtt --release
+WORKDIR /usr/src/app/source-mqtt
+RUN cargo build --release
 
 # Runtime stage
 FROM debian:bookworm-slim
@@ -41,7 +28,7 @@ RUN apt-get update && apt-get install -y \
 
 # Copy the binary from builder
 COPY --from=builder \
-    /usr/src/app/target/release/danube-source-mqtt \
+    /usr/src/app/source-mqtt/target/release/danube-source-mqtt \
     /usr/local/bin/danube-source-mqtt
 
 # Create non-root user

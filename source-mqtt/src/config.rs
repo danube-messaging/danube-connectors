@@ -12,6 +12,7 @@ use std::time::Duration;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MqttSourceConfig {
     /// Core Danube Connect configuration (flattened at root level)
+    /// Contains schemas via core.schemas
     #[serde(flatten)]
     pub core: ConnectorConfig,
 
@@ -41,7 +42,7 @@ impl MqttSourceConfig {
             .map_err(|_| danube_connect_core::ConnectorError::config(
                 "CONNECTOR_CONFIG_PATH environment variable must be set to the path of the TOML configuration file"
             ))?;
-        
+
         let mut config = Self::from_file(&config_path)?;
 
         // Apply environment variable overrides for secrets and connection details
@@ -68,7 +69,7 @@ impl MqttSourceConfig {
     }
 
     /// Apply environment variable overrides for secrets and connection details
-    /// 
+    ///
     /// Only overrides sensitive data that shouldn't be in config files:
     /// - Credentials (username, password)
     /// - Connection URLs (for different environments)
@@ -78,7 +79,7 @@ impl MqttSourceConfig {
         if let Ok(danube_url) = env::var("DANUBE_SERVICE_URL") {
             self.core.danube_service_url = danube_url;
         }
-        
+
         if let Ok(connector_name) = env::var("CONNECTOR_NAME") {
             self.core.connector_name = connector_name;
         }
@@ -87,13 +88,13 @@ impl MqttSourceConfig {
         if let Ok(host) = env::var("MQTT_BROKER_HOST") {
             self.mqtt.broker_host = host;
         }
-        
+
         if let Ok(port) = env::var("MQTT_BROKER_PORT") {
             if let Ok(p) = port.parse() {
                 self.mqtt.broker_port = p;
             }
         }
-        
+
         if let Ok(client_id) = env::var("MQTT_CLIENT_ID") {
             self.mqtt.client_id = client_id;
         }
@@ -102,11 +103,11 @@ impl MqttSourceConfig {
         if let Ok(username) = env::var("MQTT_USERNAME") {
             self.mqtt.username = Some(username);
         }
-        
+
         if let Ok(password) = env::var("MQTT_PASSWORD") {
             self.mqtt.password = Some(password);
         }
-        
+
         if let Ok(use_tls) = env::var("MQTT_USE_TLS") {
             if let Ok(b) = use_tls.parse() {
                 self.mqtt.use_tls = b;
@@ -116,8 +117,23 @@ impl MqttSourceConfig {
 
     /// Validate all configuration
     pub fn validate(&self) -> ConnectorResult<()> {
-        self.core.validate()?;
+        // Validate MQTT-specific configuration
         self.mqtt.validate()?;
+        
+        // Schema validation is handled by danube-connect-core
+        // We just validate that topics match between mappings and schemas
+        for schema in &self.core.schemas {
+            let topic_exists = self.mqtt.topic_mappings.iter()
+                .any(|m| m.danube_topic == schema.topic);
+            
+            if !topic_exists {
+                tracing::warn!(
+                    "Schema configured for topic '{}' but no topic mapping exists for it",
+                    schema.topic
+                );
+            }
+        }
+        
         Ok(())
     }
 }
@@ -195,7 +211,6 @@ fn default_true() -> bool {
 }
 
 impl MqttConfig {
-
     /// Validate the configuration
     pub fn validate(&self) -> ConnectorResult<()> {
         if self.broker_host.is_empty() {

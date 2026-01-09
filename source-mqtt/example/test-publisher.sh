@@ -1,15 +1,17 @@
 #!/bin/bash
-# Test script to publish sample MQTT messages via Docker
+# Test script to publish schema-validated MQTT messages via Docker
+# Sends messages matching sensor-data.json and device-status.json schemas
 
 set -e
 
 # Use Docker to run mosquitto_pub (no need to install on host)
-NETWORK=${NETWORK:-source-mqtt_danube-mqtt-network}
+NETWORK=${NETWORK:-example_danube-mqtt-network}
 MQTT_CONTAINER=${MQTT_CONTAINER:-mqtt-example-broker}
 
-echo "Publishing test messages to MQTT broker via Docker"
+echo "Publishing schema-validated test messages to MQTT broker via Docker"
 echo "Network: ${NETWORK}"
 echo "Broker: ${MQTT_CONTAINER}"
+echo "Schemas: sensor-data.json, device-status.json, string"
 echo "Press Ctrl+C to stop"
 echo ""
 
@@ -23,40 +25,37 @@ fi
 count=0
 while true; do
     count=$((count + 1))
-    timestamp=$(date +%s)
+    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     
-    # Temperature sensor zone1 (goes to /iot/sensors_zone1 via sensors/+/zone1 pattern)
+    # Generate random values
     temp=$((RANDOM % 30 + 10))
+    humidity=$((RANDOM % 40 + 40))
+    battery=$((RANDOM % 100))
+    signal=$((40 + RANDOM % 51))
+    signal=-$signal
+    uptime=$RANDOM
+    
+    # Temperature sensor zone1 (schema-validated: sensor-data.json)
     docker run --rm --network "${NETWORK}" eclipse-mosquitto:2 \
         mosquitto_pub -h "${MQTT_CONTAINER}" -t "sensors/temp/zone1" \
-        -m "{\"temperature\":${temp},\"unit\":\"celsius\",\"timestamp\":${timestamp}}"
+        -m "{\"device_id\":\"sensor-temp-001\",\"sensor_type\":\"temperature\",\"value\":${temp},\"unit\":\"celsius\",\"timestamp\":\"${timestamp}\",\"battery_level\":${battery}}"
     
-    # Temperature sensor zone2 (goes to /iot/temperature via sensors/temp/# pattern)
-    temp2=$((RANDOM % 30 + 10))
-    docker run --rm --network "${NETWORK}" eclipse-mosquitto:2 \
-        mosquitto_pub -h "${MQTT_CONTAINER}" -t "sensors/temp/zone2" \
-        -m "{\"temperature\":${temp2},\"unit\":\"celsius\",\"timestamp\":${timestamp}}"
-    
-    # Humidity sensor
-    humidity=$((RANDOM % 40 + 40))
+    # Humidity sensor zone1 (schema-validated: sensor-data.json)
     docker run --rm --network "${NETWORK}" eclipse-mosquitto:2 \
         mosquitto_pub -h "${MQTT_CONTAINER}" -t "sensors/humidity/zone1" \
-        -m "{\"humidity\":${humidity},\"unit\":\"percent\",\"timestamp\":${timestamp}}"
+        -m "{\"device_id\":\"sensor-hum-001\",\"sensor_type\":\"humidity\",\"value\":${humidity},\"unit\":\"percent\",\"timestamp\":\"${timestamp}\",\"signal_strength\":${signal}}"
     
-    # Pressure sensor
-    pressure=$((RANDOM % 20 + 990))
-    docker run --rm --network "${NETWORK}" eclipse-mosquitto:2 \
-        mosquitto_pub -h "${MQTT_CONTAINER}" -t "sensors/pressure/factory1" \
-        -m "{\"pressure\":${pressure},\"unit\":\"hPa\",\"timestamp\":${timestamp}}"
-    
-    # Device telemetry
-    battery=$((RANDOM % 100))
-    signal=$((RANDOM % 100))
+    # Device telemetry (schema-validated: device-status.json)
     docker run --rm --network "${NETWORK}" eclipse-mosquitto:2 \
         mosquitto_pub -h "${MQTT_CONTAINER}" -t "devices/device001/telemetry" \
-        -m "{\"battery\":${battery},\"signal\":${signal},\"timestamp\":${timestamp}}"
+        -m "{\"device_id\":\"device001\",\"status\":\"online\",\"battery_level\":${battery},\"uptime_seconds\":${uptime},\"last_seen\":\"${timestamp}\",\"firmware_version\":\"1.2.3\"}"
     
-    echo "[$(date +%T)] Published batch #${count}: temp_z1=${temp}°C, temp_z2=${temp2}°C, humidity=${humidity}%, pressure=${pressure}hPa, battery=${battery}%"
+    # Debug log (string schema - any text)
+    docker run --rm --network "${NETWORK}" eclipse-mosquitto:2 \
+        mosquitto_pub -h "${MQTT_CONTAINER}" -t "debug/app" \
+        -m "Debug: System running normally, battery: ${battery}%"
     
-    sleep 5
+    echo "[$(date +%T)] Published batch #${count}: temp=${temp}°C, humidity=${humidity}%, battery=${battery}%, signal=${signal}dBm - Schema-validated"
+    
+    sleep 2
 done

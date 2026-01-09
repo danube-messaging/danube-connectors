@@ -55,8 +55,8 @@ async fn main() -> ConnectorResult<()> {
         );
     }
 
-    // Create connector instance with MQTT configuration
-    let connector = MqttSourceConnector::with_config(config.mqtt);
+    // Create connector instance with MQTT configuration and schemas
+    let connector = MqttSourceConnector::with_config(config.mqtt, config.core.schemas.clone());
 
     // Create and run the runtime
     let mut runtime = SourceRuntime::new(connector, config.core).await?;

@@ -53,17 +53,8 @@ docker run -e DANUBE_SERVICE_URL=http://localhost:6650 \
 
 ### Building Your Own Connector
 
-Want to create a custom connector? Use the core SDK:
-
-```bash
-# Add the SDK to your project
-cargo add danube-connect-core
-
-# Implement the SinkConnector or SourceConnector trait
-# See: https://github.com/danube-messaging/danube-connect-core
-```
-
-See the [Connector Development Guide](https://github.com/danube-messaging/danube-connect-core/blob/main/info/connector-development-guide.md) for detailed instructions.
+* See the [Build your own Source Connector](https://danube-docs.dev-state.com/integrations/source_connector_development/) for detailed instructions.
+* See the [Build your own Sink Connector](https://danube-docs.dev-state.com/integrations/sink_connector_development/) for detailed instructions.
 
 ## Available Connectors
 
@@ -119,14 +110,8 @@ We welcome contributions! Here's how you can help:
 
 ### Adding a New Connector
 
-1. Create a new directory (e.g., `source-myservice` or `sink-mydb`)
-2. Add `Cargo.toml` with `danube-connect-core = "0.3"` dependency
-3. Implement the `SourceConnector` or `SinkConnector` trait
-4. Add a README with usage instructions
-5. Create a Dockerfile for deployment
-6. Submit a pull request!
-
-See the [Connector Development Guide](https://github.com/danube-messaging/danube-connect-core/blob/main/info/connector-development-guide.md) for detailed instructions.
+* See the [Build your own Source Connector](https://danube-docs.dev-state.com/integrations/source_connector_development/) for detailed instructions.
+* See the [Build your own Sink Connector](https://danube-docs.dev-state.com/integrations/sink_connector_development/) for detailed instructions.
 
 ## License
 
@@ -134,7 +119,7 @@ Apache License 2.0 - See [LICENSE](LICENSE) for details.
 
 ## Community & Resources
 
-- **Core SDK**: [danube-connect-core](https://github.com/danube-messaging/danube-connect-core) - Build your own connectors
+- **Core SDK**: [danube-connect-core](https://github.com/danube-messaging/danube-connect-core)
 - **GitHub Issues**: [Report bugs or request features](https://github.com/danube-messaging/danube-connectors/issues)
 - **Danube Docs**: [Official Documentation](https://danube-docs.dev-state.com)
 - **Main Project**: [Danube Messaging](https://github.com/danube-messaging/danube)
