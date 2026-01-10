@@ -1,0 +1,285 @@
+name: Release Source-MQTT Connector
+
+on:
+  push:
+    tags:
+      - "source-mqtt/v*.*.*"
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev protobuf-compiler
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Build
+        working-directory: source-mqtt
+        run: cargo build --release --target x86_64-unknown-linux-gnu
+
+      - name: Upload Linux binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: connector-binaries-linux
+          path: |
+            source-mqtt/target/x86_64-unknown-linux-gnu/release/danube-source-mqtt
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: brew install pkg-config openssl protobuf
+
+      - name: Set up Rust for Apple Silicon
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Build for Apple Silicon
+        working-directory: source-mqtt
+        run: cargo build --release --target aarch64-apple-darwin
+
+      - name: Upload MacOS Apple Silicon binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: connector-binaries-macos
+          path: |
+            source-mqtt/target/aarch64-apple-darwin/release/danube-source-mqtt
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install protoc
+        run: choco install protoc -y
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build for Windows
+        working-directory: source-mqtt
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Upload Windows binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: connector-binaries-windows
+          path: |
+            source-mqtt/target/x86_64-pc-windows-msvc/release/danube-source-mqtt.exe
+
+  docker-build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            platform: linux/amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          # Extract version from tag: source-mqtt/v0.2.0 -> v0.2.0
+          VERSION="${GITHUB_REF_NAME#source-mqtt/}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/danube-source-mqtt
+          tags: |
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=raw,value=latest
+
+      - name: Build and push Source-MQTT Connector image (${{ matrix.arch }})
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: source-mqtt/Dockerfile
+          platforms: ${{ matrix.platform }}
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/danube-source-mqtt:${{ steps.version.outputs.version }}-${{ matrix.arch }}
+            ghcr.io/${{ github.repository_owner }}/danube-source-mqtt:latest-${{ matrix.arch }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=source-mqtt-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=source-mqtt-${{ matrix.arch }}
+
+  docker-manifest:
+    needs: docker-build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - name: Extract version from tag
+        id: version
+        run: |
+          # Extract version from tag: source-mqtt/v0.2.0 -> v0.2.0
+          VERSION="${GITHUB_REF_NAME#source-mqtt/}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create multi-arch manifests
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          IMAGE="ghcr.io/${{ github.repository_owner }}/danube-source-mqtt"
+
+          docker buildx imagetools create \
+            -t ${IMAGE}:${VERSION} \
+            -t ${IMAGE}:latest \
+            ${IMAGE}:${VERSION}-amd64 \
+            ${IMAGE}:${VERSION}-arm64
+
+  release:
+    needs: [build-linux, build-macos, build-windows, docker-manifest]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Linux binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: connector-binaries-linux
+          path: artifacts/linux/
+
+      - name: Download MacOS binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: connector-binaries-macos
+          path: artifacts/macos/
+
+      - name: Download Windows binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: connector-binaries-windows
+          path: artifacts/windows/
+
+      - name: Prepare release assets
+        run: |
+          # Create release directory
+          mkdir -p release
+
+          # Copy and rename binaries
+          cp artifacts/linux/danube-source-mqtt release/danube-source-mqtt-linux
+          cp artifacts/macos/danube-source-mqtt release/danube-source-mqtt-macos
+          cp artifacts/windows/danube-source-mqtt.exe release/danube-source-mqtt-windows.exe
+
+          # Generate checksums
+          cd release
+          sha256sum * > checksums.txt
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          # Extract version from tag: source-mqtt/v0.2.0 -> v0.2.0
+          VERSION="${GITHUB_REF_NAME#source-mqtt/}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Compose release body
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          cat > RELEASE_BODY.md <<EOF
+          # Source-MQTT Connector ${VERSION}
+
+          MQTT source connector for Danube messaging platform supporting IoT device integration (MQTT 3.1.1).
+
+          ## Binaries
+
+          - **Linux**: [danube-source-mqtt-linux](https://github.com/${REPO}/releases/download/${TAG}/danube-source-mqtt-linux)
+          - **MacOS (Apple Silicon)**: [danube-source-mqtt-macos](https://github.com/${REPO}/releases/download/${TAG}/danube-source-mqtt-macos)
+          - **Windows**: [danube-source-mqtt-windows.exe](https://github.com/${REPO}/releases/download/${TAG}/danube-source-mqtt-windows.exe)
+
+          ## Checksums
+
+          - **SHA256**: [checksums.txt](https://github.com/${REPO}/releases/download/${TAG}/checksums.txt)
+
+          ## Docker Image
+
+          **Multi-arch image (linux/amd64, linux/arm64)**:
+
+          \`\`\`bash
+          docker pull ghcr.io/${OWNER}/danube-source-mqtt:${VERSION}
+          \`\`\`
+
+          ## Documentation
+
+          - **Main README**: [source-mqtt/README.md](https://github.com/${REPO}/tree/${TAG}/source-mqtt)
+          - **Configuration Guide**: [source-mqtt/config/README.md](https://github.com/${REPO}/tree/${TAG}/source-mqtt/config)
+          - **Example Setup**: [source-mqtt/example/README.md](https://github.com/${REPO}/tree/${TAG}/source-mqtt/example)
+
+          EOF
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Source-MQTT Connector ${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: false
+          files: |
+            release/danube-source-mqtt-linux
+            release/danube-source-mqtt-macos
+            release/danube-source-mqtt-windows.exe
+            release/checksums.txt
+          body_path: RELEASE_BODY.md

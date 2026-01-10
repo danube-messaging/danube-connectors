@@ -1,0 +1,285 @@
+name: Release Sink-SurrealDB Connector
+
+on:
+  push:
+    tags:
+      - "sink-surrealdb/v*.*.*"
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev protobuf-compiler
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Build
+        working-directory: sink-surrealdb
+        run: cargo build --release --target x86_64-unknown-linux-gnu
+
+      - name: Upload Linux binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: connector-binaries-linux
+          path: |
+            sink-surrealdb/target/x86_64-unknown-linux-gnu/release/danube-sink-surrealdb
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: brew install pkg-config openssl protobuf
+
+      - name: Set up Rust for Apple Silicon
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Build for Apple Silicon
+        working-directory: sink-surrealdb
+        run: cargo build --release --target aarch64-apple-darwin
+
+      - name: Upload MacOS Apple Silicon binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: connector-binaries-macos
+          path: |
+            sink-surrealdb/target/aarch64-apple-darwin/release/danube-sink-surrealdb
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install protoc
+        run: choco install protoc -y
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build for Windows
+        working-directory: sink-surrealdb
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Upload Windows binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: connector-binaries-windows
+          path: |
+            sink-surrealdb/target/x86_64-pc-windows-msvc/release/danube-sink-surrealdb.exe
+
+  docker-build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            platform: linux/amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          # Extract version from tag: sink-surrealdb/v0.2.0 -> v0.2.0
+          VERSION="${GITHUB_REF_NAME#sink-surrealdb/}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/danube-sink-surrealdb
+          tags: |
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=raw,value=latest
+
+      - name: Build and push Sink-SurrealDB Connector image (${{ matrix.arch }})
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: sink-surrealdb/Dockerfile
+          platforms: ${{ matrix.platform }}
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/danube-sink-surrealdb:${{ steps.version.outputs.version }}-${{ matrix.arch }}
+            ghcr.io/${{ github.repository_owner }}/danube-sink-surrealdb:latest-${{ matrix.arch }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=sink-surrealdb-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=sink-surrealdb-${{ matrix.arch }}
+
+  docker-manifest:
+    needs: docker-build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - name: Extract version from tag
+        id: version
+        run: |
+          # Extract version from tag: sink-surrealdb/v0.2.0 -> v0.2.0
+          VERSION="${GITHUB_REF_NAME#sink-surrealdb/}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create multi-arch manifests
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          IMAGE="ghcr.io/${{ github.repository_owner }}/danube-sink-surrealdb"
+
+          docker buildx imagetools create \
+            -t ${IMAGE}:${VERSION} \
+            -t ${IMAGE}:latest \
+            ${IMAGE}:${VERSION}-amd64 \
+            ${IMAGE}:${VERSION}-arm64
+
+  release:
+    needs: [build-linux, build-macos, build-windows, docker-manifest]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Linux binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: connector-binaries-linux
+          path: artifacts/linux/
+
+      - name: Download MacOS binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: connector-binaries-macos
+          path: artifacts/macos/
+
+      - name: Download Windows binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: connector-binaries-windows
+          path: artifacts/windows/
+
+      - name: Prepare release assets
+        run: |
+          # Create release directory
+          mkdir -p release
+
+          # Copy and rename binaries
+          cp artifacts/linux/danube-sink-surrealdb release/danube-sink-surrealdb-linux
+          cp artifacts/macos/danube-sink-surrealdb release/danube-sink-surrealdb-macos
+          cp artifacts/windows/danube-sink-surrealdb.exe release/danube-sink-surrealdb-windows.exe
+
+          # Generate checksums
+          cd release
+          sha256sum * > checksums.txt
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          # Extract version from tag: sink-surrealdb/v0.2.0 -> v0.2.0
+          VERSION="${GITHUB_REF_NAME#sink-surrealdb/}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Compose release body
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          cat > RELEASE_BODY.md <<EOF
+          # Sink-SurrealDB Connector ${VERSION}
+
+          SurrealDB sink connector for Danube messaging platform enabling multi-model database ingestion (documents, graphs, time-series).
+
+          ## Binaries
+
+          - **Linux**: [danube-sink-surrealdb-linux](https://github.com/${REPO}/releases/download/${TAG}/danube-sink-surrealdb-linux)
+          - **MacOS (Apple Silicon)**: [danube-sink-surrealdb-macos](https://github.com/${REPO}/releases/download/${TAG}/danube-sink-surrealdb-macos)
+          - **Windows**: [danube-sink-surrealdb-windows.exe](https://github.com/${REPO}/releases/download/${TAG}/danube-sink-surrealdb-windows.exe)
+
+          ## Checksums
+
+          - **SHA256**: [checksums.txt](https://github.com/${REPO}/releases/download/${TAG}/checksums.txt)
+
+          ## Docker Image
+
+          **Multi-arch image (linux/amd64, linux/arm64)**:
+
+          \`\`\`bash
+          docker pull ghcr.io/${OWNER}/danube-sink-surrealdb:${VERSION}
+          \`\`\`
+
+          ## Documentation
+
+          - **Main README**: [sink-surrealdb/README.md](https://github.com/${REPO}/tree/${TAG}/sink-surrealdb)
+          - **Configuration Guide**: [sink-surrealdb/config/README.md](https://github.com/${REPO}/tree/${TAG}/sink-surrealdb/config)
+          - **Example Setup**: [sink-surrealdb/example/README.md](https://github.com/${REPO}/tree/${TAG}/sink-surrealdb/example)
+
+          EOF
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Sink-SurrealDB Connector ${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: false
+          files: |
+            release/danube-sink-surrealdb-linux
+            release/danube-sink-surrealdb-macos
+            release/danube-sink-surrealdb-windows.exe
+            release/checksums.txt
+          body_path: RELEASE_BODY.md

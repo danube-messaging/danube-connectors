@@ -78,25 +78,21 @@ docker run -e DANUBE_SERVICE_URL=http://localhost:6650 \
 | OpenTelemetry | 🚧 Planned | Lightweight OTLP receiver (traces/metrics/logs) | - |
 | PostgreSQL CDC | 🚧 Planned | Change Data Capture from Postgres | - |
 
+## Releasing Connectors
 
-## Building Connectors from Source
+Connectors are released independently with their own versions and tags. To release a connector:
 
-Each connector is independently buildable:
+1. **Update the version** in the connector's `Cargo.toml`
+2. **Commit your changes** to the repository
+3. **Create and push a tag** with the connector name prefix:
 
 ```bash
-# Clone this repository
-git clone https://github.com/danube-messaging/danube-connectors
-cd danube-connectors
-
-# Build a specific connector
-cd source-mqtt
-cargo build --release
-
-# Run tests
-cargo test
-
-# The binary will be at: target/release/danube-source-mqtt
+# Example: Releasing source-webhook v0.2.0
+git tag source-webhook/v0.2.0
+git push origin source-webhook/v0.2.0
 ```
+
+The GitHub Actions workflow will automatically build multi-platform binaries and Docker images, then create a release with all artifacts.
 
 ## Contributing
 
