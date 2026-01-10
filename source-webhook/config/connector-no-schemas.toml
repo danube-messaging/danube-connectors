@@ -1,0 +1,49 @@
+# =============================================================================
+# HTTP/Webhook Source Connector Configuration (Without Schemas)
+# =============================================================================
+# This configuration demonstrates backward compatibility - no schema validation
+
+# Core Danube settings (flattened from ConnectorConfig)
+danube_service_url = "http://localhost:6650"
+connector_name = "webhook-no-schemas"
+
+# Processing settings
+[processing]
+batch_size = 100
+poll_interval_ms = 100
+metrics_port = 9090
+
+# Retry settings
+[retry]
+initial_interval_ms = 1000
+max_interval_ms = 60000
+max_retries = 5
+
+# No [[schemas]] sections - backward compatible mode
+
+# =============================================================================
+# Connector-Specific Settings
+# =============================================================================
+
+[server]
+host = "0.0.0.0"
+port = 8080
+timeout_seconds = 30
+max_body_size = 1048576
+
+# Platform-wide authentication
+[auth]
+type = "none"
+
+# Endpoint 1: Generic webhooks (no schema validation)
+[[endpoints]]
+path = "/webhooks/generic"
+danube_topic = "/webhooks/events"
+partitions = 2
+reliable_dispatch = false
+
+# Endpoint 2: Critical webhooks (no schema validation)
+[[endpoints]]
+path = "/webhooks/critical"
+danube_topic = "/webhooks/critical"
+reliable_dispatch = true

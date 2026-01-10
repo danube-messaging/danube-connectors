@@ -10,6 +10,7 @@ A high-performance HTTP/Webhook source connector that receives webhooks from ext
 - 🎯 **Multi-Endpoint Routing** - Route different webhook paths to different Danube topics
 - 📦 **Partitioned Topics** - Per-endpoint partition configuration for parallel processing
 - 🛡️ **Reliable Dispatch** - Configurable reliable/non-reliable delivery per endpoint
+- 🎨 **Schema Validation** - Optional JSON Schema validation with auto-registration
 - 📝 **Metadata Enrichment** - Automatic enrichment with timestamp, IP, headers, user-agent
 - ⚡ **High Performance** - Async I/O with middleware-based architecture
 - 🏥 **Health Checks** - Built-in health and readiness endpoints
@@ -45,11 +46,12 @@ docker run -d \
 
 For a complete working setup with Docker Compose, test webhooks, and step-by-step guide:
 
-👉 **See [examples/source-webhook](../../examples/source-webhook/README.md)**
+👉 **See [example/README.md](example/README.md)**
 
 The example includes:
 - Docker Compose setup (Danube + ETCD + Webhook Connector)
-- Pre-configured connector.toml with 4 endpoints
+- Pre-configured connector.toml with 4 endpoints and 2 schemas
+- Schema validation testing (JSON Schema + String schema)
 - Test webhook publisher script
 - Authentication and rate limiting examples
 
@@ -71,9 +73,30 @@ See **[config/README.md](config/README.md)** for comprehensive configuration doc
 
 ```toml
 # connector.toml
-[core]
+
+# Core Danube settings (flattened)
 danube_service_url = "http://danube-broker:6650"
 connector_name = "webhook-source"
+
+# Processing and retry settings
+[processing]
+batch_size = 100
+poll_interval_ms = 100
+metrics_port = 9090
+
+[retry]
+initial_interval_ms = 1000
+max_interval_ms = 60000
+max_retries = 5
+
+# Optional: Schema validation
+[[schemas]]
+topic = "/stripe/payments"
+subject = "stripe-payment-v1"
+schema_type = "json_schema"
+schema_file = "schemas/payment.json"
+auto_register = true
+version_strategy = "latest"
 
 [server]
 host = "0.0.0.0"
@@ -130,19 +153,19 @@ cargo build --release --package danube-source-webhook
 cargo test --package danube-source-webhook
 
 # Build Docker image
-docker build -f connectors/source-webhook/Dockerfile -t danube/source-webhook:latest .
+docker build -f source-webhook/Dockerfile -t danube/source-webhook:latest ../..
 ```
 
 ### Running from Source
 
 ```bash
 # Run with configuration file
-export CONNECTOR_CONFIG_PATH=connectors/source-webhook/config/connector.toml
+export CONNECTOR_CONFIG_PATH=config/connector.toml
 export WEBHOOK_API_KEY=test-api-key-12345
-cargo run --release --package danube-source-webhook
+cargo run --release
 
 # With environment overrides
-export CONNECTOR_CONFIG_PATH=connectors/source-webhook/config/connector.toml
+export CONNECTOR_CONFIG_PATH=config/connector.toml
 export DANUBE_SERVICE_URL=http://localhost:6650
 export WEBHOOK_API_KEY=test-api-key-12345
 cargo run --release --package danube-source-webhook
@@ -185,8 +208,9 @@ These attributes are queryable in Danube consumers and useful for filtering, rou
 
 ### Complete Working Example
 
-See **[examples/source-webhook](../../examples/source-webhook)** for a complete setup with:
+See **[example/](example/)** for a complete setup with:
 - Docker Compose (Danube + ETCD + Webhook Connector)
+- Schema validation testing (JSON Schema + String schema)
 - Test webhook publishers
 - Step-by-step testing guide
 - Authentication and rate limiting examples
@@ -345,6 +369,8 @@ Monitor these key metrics:
 - Check topic name format: `/{namespace}/{topic}` (exactly 2 segments)
 - Verify namespace exists in Danube broker
 - Check network connectivity to Danube broker
+- If using schemas: verify schema files exist and are valid JSON Schema
+- Check schema validation errors in logs
 
 ### High Latency
 
@@ -359,9 +385,18 @@ Monitor these key metrics:
 
 ## 🎯 Use Cases
 
-### Stripe Webhooks
+### Stripe Webhooks with Schema Validation
 
 ```toml
+# Schema validation for payment webhooks
+[[schemas]]
+topic = "/stripe/payments"
+subject = "stripe-payment-v1"
+schema_type = "json_schema"
+schema_file = "schemas/payment.json"
+auto_register = true
+version_strategy = "latest"
+
 [[endpoints]]
 path = "/webhooks/stripe/payments"
 danube_topic = "/stripe/payments"

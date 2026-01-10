@@ -70,7 +70,7 @@ services:
   webhook-connector:
     build:
       context: ../../
-      dockerfile: connectors/source-webhook/Dockerfile
+      dockerfile: source-webhook/Dockerfile
     container_name: webhook-example-connector
     depends_on:
       danube-broker:
@@ -80,6 +80,8 @@ services:
     volumes:
       # Mount TOML configuration file
       - ./connector.toml:/etc/connector.toml:ro
+      # Mount schema files for validation
+      - ./schemas:/etc/schemas:ro
     environment:
       # Required: Path to configuration file
       - CONNECTOR_CONFIG_PATH=/etc/connector.toml

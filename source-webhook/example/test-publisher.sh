@@ -1,6 +1,13 @@
 #!/bin/bash
 # Test webhook publisher script
-# Sends test webhooks to the webhook connector to simulate external services
+# Sends schema-compliant test webhooks to the webhook connector to simulate external services
+#
+# This script demonstrates:
+# - Payment webhooks with JSON schema validation (validates structure, types, enums)
+# - Generic webhooks with string schema validation (accepts any text)
+# - GitHub and alert webhooks without schema validation (backward compatibility)
+#
+# All webhooks use API key authentication and test different endpoint configurations
 
 set -e
 
@@ -21,6 +28,12 @@ NC='\033[0m' # No Color
 echo -e "${BLUE}=== Webhook Test Publisher ===${NC}"
 echo "Target: http://${WEBHOOK_HOST}:${WEBHOOK_PORT}"
 echo "API Key: ${API_KEY}"
+echo ""
+echo "Schema Validation:"
+echo "  ✓ /webhooks/stripe/payments   → JSON Schema (payment.json)"
+echo "  ✓ /webhooks/generic            → String Schema"
+echo "  ✗ /webhooks/github/push        → No validation"
+echo "  ✗ /webhooks/alerts             → No validation"
 echo ""
 
 # Check if connector is running
@@ -46,28 +59,31 @@ while true; do
     
     echo -e "${BLUE}[$(date +%T)] Batch #${count}${NC}"
     
-    # 1. Stripe payment webhook (partitioned, reliable)
+    # 1. Stripe payment webhook (partitioned, reliable, with JSON schema validation)
     amount=$((RANDOM % 10000 + 1000))
     customer_id="cus_$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 10)"
+    # Payment events cycle through schema-valid event types
+    payment_events=("payment.succeeded" "payment.failed" "payment.canceled" "payment.refunded")
+    payment_event=${payment_events[$((count % 4))]}
     response=$(curl -X POST "http://${WEBHOOK_HOST}:${WEBHOOK_PORT}/webhooks/stripe/payments" \
         -H "Content-Type: application/json" \
         -H "x-api-key: ${API_KEY}" \
         -d "{
-            \"event\": \"payment.succeeded\",
+            \"event\": \"${payment_event}\",
             \"amount\": ${amount},
-            \"currency\": \"usd\",
+            \"currency\": \"USD\",
             \"customer_id\": \"${customer_id}\",
             \"timestamp\": ${timestamp}
         }" \
         -s -w "\n%{http_code}" -o /dev/null)
     
     if [ "$response" = "200" ]; then
-        echo -e "  ${GREEN}✓${NC} Stripe Payment: \$$(echo "scale=2; ${amount}/100" | bc) (${response})"
+        echo -e "  ${GREEN}✓${NC} Stripe Payment: ${payment_event} \$$(echo "scale=2; ${amount}/100" | bc) (${response})"
     else
-        echo -e "  ${RED}✗${NC} Stripe Payment: HTTP ${response}"
+        echo -e "  ${RED}✗${NC} Stripe Payment: ${payment_event} HTTP ${response}"
     fi
     
-    # 2. GitHub push webhook (partitioned, non-reliable)
+    # 2. GitHub push webhook (partitioned, non-reliable, no schema validation)
     commits=$((RANDOM % 5 + 1))
     branch="feature/branch-${count}"
     response=$(curl -X POST "http://${WEBHOOK_HOST}:${WEBHOOK_PORT}/webhooks/github/push" \
@@ -89,7 +105,7 @@ while true; do
         echo -e "  ${RED}✗${NC} GitHub Push: HTTP ${response}"
     fi
     
-    # 3. Generic webhook (non-partitioned, reliable)
+    # 3. Generic webhook (non-partitioned, reliable, with string schema validation)
     event_types=("user.created" "user.updated" "user.deleted" "order.placed" "order.shipped")
     event_type=${event_types[$RANDOM % ${#event_types[@]}]}
     response=$(curl -X POST "http://${WEBHOOK_HOST}:${WEBHOOK_PORT}/webhooks/generic" \
@@ -111,7 +127,7 @@ while true; do
         echo -e "  ${RED}✗${NC} Generic Event: HTTP ${response}"
     fi
     
-    # 4. Alert webhook (non-partitioned, non-reliable)
+    # 4. Alert webhook (non-partitioned, non-reliable, no schema validation)
     severity=$((RANDOM % 3 + 1))
     severity_names=("info" "warning" "critical")
     severity_name=${severity_names[$((severity - 1))]}

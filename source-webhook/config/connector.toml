@@ -1,15 +1,59 @@
+# =============================================================================
 # HTTP/Webhook Source Connector Configuration
-# This is a reference configuration for the webhook source connector
+# =============================================================================
+# This configuration demonstrates schema registry integration for webhook events
 
-[core]
-# Danube broker service URL (can be overridden with DANUBE_SERVICE_URL env var)
+# Core Danube settings (flattened from ConnectorConfig)
 danube_service_url = "http://localhost:6650"
-
-# Unique connector name (can be overridden with CONNECTOR_NAME env var)
 connector_name = "webhook-stripe"
 
-# Metrics port for Prometheus (default: 9090)
+# Processing settings
+[processing]
+batch_size = 100
+poll_interval_ms = 100
 metrics_port = 9090
+
+# Retry settings
+[retry]
+initial_interval_ms = 1000
+max_interval_ms = 60000
+max_retries = 5
+
+# =============================================================================
+# Schema Registry Configuration (Optional)
+# =============================================================================
+# Define schemas for topics that require validation
+
+# Schema for payment events
+[[schemas]]
+topic = "/stripe/payments"
+subject = "stripe-payment-v1"
+schema_type = "json_schema"
+schema_file = "schemas/payment.json"
+auto_register = true
+version_strategy = "latest"
+
+# Schema for customer events
+[[schemas]]
+topic = "/stripe/customers"
+subject = "stripe-customer-v1"
+schema_type = "json_schema"
+schema_file = "schemas/customer.json"
+auto_register = true
+version_strategy = "latest"
+
+# Schema for subscription events (string schema - no file needed)
+[[schemas]]
+topic = "/stripe/subscriptions"
+subject = "stripe-subscription-v1"
+schema_type = "string"
+schema_file = ""
+auto_register = true
+version_strategy = "latest"
+
+# =============================================================================
+# Connector-Specific Settings
+# =============================================================================
 
 [server]
 # Host to bind to (default: 0.0.0.0)
@@ -71,7 +115,7 @@ path = "/webhooks/payments"
 danube_topic = "/stripe/payments"
 
 # Number of partitions (0 or omitted = non-partitioned)
-partitions = 4
+partitions = 2
 
 # Reliable dispatch (default: false)
 # Set to true for critical events that must not be lost
@@ -89,9 +133,30 @@ danube_topic = "/stripe/customers"
 partitions = 2
 reliable_dispatch = false
 
-# Endpoint 3: Subscription events (non-partitioned, reliable)
+# Endpoint 3: Subscription events (non-partitioned, reliable, with string schema)
 [[endpoints]]
 path = "/webhooks/subscriptions"
 danube_topic = "/stripe/subscriptions"
 # partitions = 0  # Omitted = non-partitioned (defaults to 0)
 reliable_dispatch = true
+
+# =============================================================================
+# Environment Variable Overrides
+# =============================================================================
+# The following can be overridden via environment variables:
+#
+# Core settings:
+#   DANUBE_SERVICE_URL=http://broker:6650
+#   CONNECTOR_NAME=webhook-production
+#
+# Server settings:
+#   SERVER_HOST=0.0.0.0
+#   SERVER_PORT=8080
+#
+# Secrets (should NOT be in TOML):
+#   STRIPE_WEBHOOK_SECRET=whsec_...
+#
+# NOT supported via environment variables:
+#   - Schema definitions (must be in TOML)
+#   - Endpoint mappings (must be in TOML)
+#   - Processing/retry settings (must be in TOML)

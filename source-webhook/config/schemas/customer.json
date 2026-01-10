@@ -1,0 +1,51 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "title": "Stripe Customer Webhook Event",
+  "description": "Schema for Stripe customer webhook events",
+  "required": ["id", "type", "object", "created"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^evt_"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "customer.created",
+        "customer.updated",
+        "customer.deleted"
+      ]
+    },
+    "object": {
+      "type": "string",
+      "const": "event"
+    },
+    "created": {
+      "type": "integer"
+    },
+    "data": {
+      "type": "object",
+      "required": ["object"],
+      "properties": {
+        "object": {
+          "type": "object",
+          "required": ["id", "email"],
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^cus_"
+            },
+            "email": {
+              "type": "string",
+              "format": "email"
+            },
+            "name": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

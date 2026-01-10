@@ -1,11 +1,20 @@
-# Webhook Source Connector Example
+# Webhook Source Connector - Schema Validation Testing
 
-This example demonstrates how to use the **HTTP/Webhook Source Connector** to receive webhooks from external services and publish them to Danube topics.
+This example demonstrates **schema validation testing** of the HTTP/Webhook Source Connector with Danube's built-in Schema Registry.
+
+## ⚡ Key Features
+
+- ✅ **Schema Registry Integration** - Auto-register and validate webhook payloads
+- ✅ **2 Schemas Enabled** - JSON Schema + String schema
+- ✅ **Automated Testing** - Test publisher sends compliant webhooks every 5s
+- ✅ **Real Validation** - See valid/invalid messages handled differently
+- ✅ **Production-Ready** - Same setup you'd use in production
 
 ## Overview
 
 The webhook connector acts as an HTTP server that:
 - ✅ Receives webhooks via HTTP POST requests
+- ✅ **Validates payloads against schemas** (new!)
 - ✅ Authenticates requests (API Key, HMAC, JWT, or None)
 - ✅ Rate limits requests (per-endpoint and per-IP)
 - ✅ Routes webhooks to different Danube topics based on endpoint path
@@ -35,9 +44,28 @@ External Services          Webhook Connector              Danube Broker
 This example includes:
 
 1. **etcd** - Metadata store for Danube
-2. **Danube Broker** - Message broker with 4 namespaces (default, webhooks, stripe, github)
-3. **Webhook Connector** - HTTP server receiving webhooks
-4. **Test Publisher** - Simulates external services sending webhooks
+2. **Danube Broker** - Message broker with built-in schema registry and 4 namespaces
+3. **Webhook Connector** - HTTP server receiving and validating webhooks
+4. **Test Publisher** - Simulates external services sending schema-compliant webhooks
+5. **Schema Files** - JSON Schema definitions for payload validation
+
+## Files
+
+```
+source-webhook/example/
+├── docker-compose.yml        # Orchestrates all services
+├── danube_broker.yml          # Danube broker configuration
+├── connector.toml             # Webhook connector config (with schemas!)
+├── schemas/
+│   └── payment.json          # JSON Schema for Stripe payments
+├── test-publisher.sh         # Standalone test script
+└── README.md                 # This file
+```
+
+**Key files:**
+- **`connector.toml`** - Contains 2 schema definitions + 4 endpoint mappings
+- **`schemas/payment.json`** - Validates payment webhook structure
+- **`docker-compose.yml`** - Mounts schemas directory into connector container
 
 ## Quick Start
 
@@ -70,10 +98,9 @@ docker-compose logs -f danube-broker
 docker-compose logs -f webhook-test-publisher
 ```
 
-### 3. Test Manually
+### 3. Test Schema Validation
 
-Send a test webhook:
-
+**Valid payment webhook (passes JSON schema validation):**
 ```bash
 curl -X POST http://localhost:8080/webhooks/stripe/payments \
   -H "Content-Type: application/json" \
@@ -81,24 +108,52 @@ curl -X POST http://localhost:8080/webhooks/stripe/payments \
   -d '{
     "event": "payment.succeeded",
     "amount": 5000,
-    "currency": "usd",
+    "currency": "USD",
     "customer_id": "cus_test123",
-    "timestamp": 1234567890
+    "timestamp": 1704931200
   }'
 ```
+Response: `200 OK` ✅
 
-Expected response: `200 OK`
+**Invalid payment webhook (fails validation - missing required fields):**
+```bash
+curl -X POST http://localhost:8080/webhooks/stripe/payments \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: test-api-key-12345" \
+  -d '{"event": "payment.succeeded", "amount": 5000}'
+```
+Response: `400 Bad Request` ❌
 
-### 4. Test Authentication
+### 4. Test Other Endpoints
 
-**Valid API Key:**
+**GitHub webhook (no schema validation):**
+```bash
+curl -X POST http://localhost:8080/webhooks/github/push \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: test-api-key-12345" \
+  -d '{"event": "push", "repository": "danube-connect", "commits": 3}'
+```
+Response: `200 OK`
+
+**Generic webhook (string schema - accepts any text):**
 ```bash
 curl -X POST http://localhost:8080/webhooks/generic \
   -H "Content-Type: application/json" \
   -H "x-api-key: test-api-key-12345" \
-  -d '{"event": "test"}'
+  -d '{"event": "custom.event", "data": "anything"}'
 ```
 Response: `200 OK`
+
+**Alert webhook (no schema):**
+```bash
+curl -X POST http://localhost:8080/webhooks/alerts \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: test-api-key-12345" \
+  -d '{"severity": "high", "message": "Test alert"}'
+```
+Response: `200 OK`
+
+### 5. Test Authentication
 
 **Invalid API Key:**
 ```bash
@@ -109,15 +164,7 @@ curl -X POST http://localhost:8080/webhooks/generic \
 ```
 Response: `401 Unauthorized`
 
-**Missing API Key:**
-```bash
-curl -X POST http://localhost:8080/webhooks/generic \
-  -H "Content-Type: application/json" \
-  -d '{"event": "test"}'
-```
-Response: `401 Unauthorized`
-
-### 5. Test Invalid Endpoint
+**Invalid endpoint:**
 
 ```bash
 curl -X POST http://localhost:8080/webhooks/invalid \
@@ -127,7 +174,18 @@ curl -X POST http://localhost:8080/webhooks/invalid \
 ```
 Response: `404 Not Found`
 
-### 6. Health Check
+### 6. Check Connector Logs
+
+```bash
+docker logs -f webhook-example-connector | grep -i schema
+```
+
+You should see:
+- Schema auto-registration on startup
+- Validation success/failure messages
+- Detailed error messages for invalid payloads
+
+### 7. Health Check
 
 ```bash
 curl http://localhost:8080/health
@@ -141,7 +199,7 @@ Response:
 }
 ```
 
-### 7. Use Test Publisher Script
+### 8. Use Test Publisher Script
 
 Run the standalone test publisher:
 
@@ -153,16 +211,38 @@ This will continuously send webhooks to all configured endpoints and show the re
 
 ## Configuration
 
+### Configured Schemas
+
+This example demonstrates schema validation with 2 configured schemas:
+
+| Danube Topic | Schema Subject | Type | Schema File | Validation |
+|--------------|---------------|------|-------------|------------|
+| `/stripe/payments` | `stripe-payment-v1` | JSON Schema | `/etc/schemas/payment.json` | ✅ Validates structure & types |
+| `/webhooks/generic` | `generic-webhook-v1` | String | `""` (empty) | ✅ Any text accepted |
+| `/github/push` | - | None | N/A | ❌ No validation |
+| `/webhooks/alerts` | - | None | N/A | ❌ No validation |
+
+**Schema file patterns:**
+- **JSON Schema**: Requires path to `.json` file: `schema_file = "/etc/schemas/payment.json"`
+- **String/Number/Bytes**: Use empty string: `schema_file = ""`
+
+**How it works:**
+1. Webhook arrives at endpoint
+2. Connector routes to Danube topic based on endpoint mapping
+3. If schema configured for topic → Runtime validates payload
+4. Valid messages published to Danube
+5. Invalid messages rejected with error
+
 ### Endpoints
 
 The example includes 4 webhook endpoints:
 
-| Endpoint | Danube Topic | Partitions | Reliable | Use Case |
-|----------|--------------|------------|----------|----------|
-| `/webhooks/stripe/payments` | `/stripe/payments` | 4 | ✅ Yes | Critical payment events |
-| `/webhooks/github/push` | `/github/push` | 2 | ❌ No | Git push notifications |
-| `/webhooks/generic` | `/webhooks/generic` | 0 (non-partitioned) | ✅ Yes | Generic events |
-| `/webhooks/alerts` | `/webhooks/alerts` | 0 (non-partitioned) | ❌ No | Monitoring alerts |
+| Endpoint | Danube Topic | Partitions | Reliable | Schema | Use Case |
+|----------|--------------|------------|----------|--------|----------|
+| `/webhooks/stripe/payments` | `/stripe/payments` | 4 | ✅ Yes | ✅ JSON | Critical payment events |
+| `/webhooks/github/push` | `/github/push` | 2 | ❌ No | ❌ None | Git push notifications |
+| `/webhooks/generic` | `/webhooks/generic` | 0 (non-partitioned) | ✅ Yes | ✅ String | Generic events |
+| `/webhooks/alerts` | `/webhooks/alerts` | 0 (non-partitioned) | ❌ No | ❌ None | Monitoring alerts |
 
 ### Authentication
 
@@ -215,78 +295,6 @@ docker-compose logs -f webhook-test-publisher
 
 Shows HTTP response codes for each webhook sent.
 
-## Advanced Usage
-
-### Custom Webhook Payload
-
-Send your own webhook with custom data:
-
-```bash
-curl -X POST http://localhost:8080/webhooks/generic \
-  -H "Content-Type: application/json" \
-  -H "x-api-key: test-api-key-12345" \
-  -d '{
-    "event": "custom.event",
-    "user_id": "user_123",
-    "action": "login",
-    "metadata": {
-      "ip": "192.168.1.1",
-      "user_agent": "Mozilla/5.0"
-    },
-    "timestamp": 1234567890
-  }'
-```
-
-### Simulate Stripe Webhook
-
-```bash
-curl -X POST http://localhost:8080/webhooks/stripe/payments \
-  -H "Content-Type: application/json" \
-  -H "x-api-key: test-api-key-12345" \
-  -d '{
-    "id": "evt_1234567890",
-    "object": "event",
-    "type": "payment_intent.succeeded",
-    "data": {
-      "object": {
-        "id": "pi_1234567890",
-        "amount": 2000,
-        "currency": "usd",
-        "status": "succeeded"
-      }
-    }
-  }'
-```
-
-### Simulate GitHub Webhook
-
-```bash
-curl -X POST http://localhost:8080/webhooks/github/push \
-  -H "Content-Type: application/json" \
-  -H "x-api-key: test-api-key-12345" \
-  -d '{
-    "ref": "refs/heads/main",
-    "repository": {
-      "name": "danube-connect",
-      "full_name": "danube-messaging/danube-connect"
-    },
-    "pusher": {
-      "name": "developer",
-      "email": "dev@example.com"
-    },
-    "commits": [
-      {
-        "id": "abc123",
-        "message": "Fix bug",
-        "author": {
-          "name": "Developer",
-          "email": "dev@example.com"
-        }
-      }
-    ]
-  }'
-```
-
 ## Consuming Messages from Danube
 
 To verify webhook messages are reaching Danube, consume them using **danube-cli**.
@@ -300,11 +308,11 @@ Download the latest release for your system from [Danube Releases](https://githu
 
 ```bash
 # Linux
-wget https://github.com/danube-messaging/danube/releases/download/v0.5.2/danube-cli-linux
+wget https://github.com/danube-messaging/danube/releases/download/v0.6.1/danube-cli-linux
 chmod +x danube-cli-linux
 
 # macOS (Apple Silicon)
-wget https://github.com/danube-messaging/danube/releases/download/v0.5.2/danube-cli-macos
+wget https://github.com/danube-messaging/danube/releases/download/v0.6.1/danube-cli-macos
 chmod +x danube-cli-macos
 
 # Windows
@@ -318,7 +326,7 @@ chmod +x danube-cli-macos
 
 Or use the Docker image:
 ```bash
-docker pull ghcr.io/danube-messaging/danube-cli:v0.5.2
+docker pull ghcr.io/danube-messaging/danube-cli:latest
 ```
 
 ### Consume Webhook Messages

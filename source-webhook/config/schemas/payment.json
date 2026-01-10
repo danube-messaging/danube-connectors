@@ -1,0 +1,48 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "title": "Stripe Payment Webhook Event",
+  "description": "Schema for Stripe payment webhook events",
+  "required": ["id", "type", "object", "created"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique identifier for the event",
+      "pattern": "^evt_"
+    },
+    "type": {
+      "type": "string",
+      "description": "Event type",
+      "enum": [
+        "payment_intent.created",
+        "payment_intent.succeeded",
+        "payment_intent.payment_failed",
+        "charge.succeeded",
+        "charge.failed"
+      ]
+    },
+    "object": {
+      "type": "string",
+      "const": "event"
+    },
+    "created": {
+      "type": "integer",
+      "description": "Unix timestamp when event was created"
+    },
+    "data": {
+      "type": "object",
+      "description": "Event data payload",
+      "required": ["object"],
+      "properties": {
+        "object": {
+          "type": "object",
+          "description": "The payment object"
+        }
+      }
+    },
+    "livemode": {
+      "type": "boolean",
+      "description": "Whether event occurred in live mode"
+    }
+  }
+}

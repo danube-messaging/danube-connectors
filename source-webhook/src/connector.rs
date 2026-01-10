@@ -3,8 +3,8 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use danube_connect_core::{
-    ConnectorConfig, ConnectorError, ConnectorResult, Offset, ProducerConfig, SourceConnector,
-    SourceRecord,
+    ConnectorConfig, ConnectorError, ConnectorResult, Offset, ProducerConfig, SchemaConfig,
+    SchemaMapping, SourceConnector, SourceRecord,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -18,6 +18,8 @@ use crate::config::{EndpointConfig, WebhookSourceConfig};
 pub struct WebhookConnector {
     /// Connector configuration
     config: WebhookSourceConfig,
+    /// Schema mappings for topics
+    schemas: Vec<SchemaMapping>,
     /// Channel receiver for incoming webhook records
     message_rx: Option<Receiver<SourceRecord>>,
     /// Channel sender for webhook handler (shared with HTTP server)
@@ -29,8 +31,8 @@ pub struct WebhookConnector {
 }
 
 impl WebhookConnector {
-    /// Create a new webhook connector with configuration
-    pub fn with_config(config: WebhookSourceConfig) -> Self {
+    /// Create a new webhook connector with configuration and schemas
+    pub fn with_config(config: WebhookSourceConfig, schemas: Vec<SchemaMapping>) -> Self {
         // Build endpoint map
         let mut endpoints = HashMap::new();
         for endpoint in &config.endpoints {
@@ -39,6 +41,7 @@ impl WebhookConnector {
 
         Self {
             config,
+            schemas,
             message_rx: None,
             message_tx: None,
             endpoints: Arc::new(RwLock::new(endpoints)),
@@ -189,11 +192,26 @@ impl SourceConnector for WebhookConnector {
 
         let producer_configs: Vec<_> = topics
             .into_iter()
-            .map(|(topic, (partitions, reliable_dispatch))| ProducerConfig {
-                topic,
-                partitions,
-                reliable_dispatch,
-                schema_config: None, // No schema registry for webhook source (uses auto-detection)
+            .map(|(topic, (partitions, reliable_dispatch))| {
+                // Find schema configuration for this topic
+                let schema_config = self
+                    .schemas
+                    .iter()
+                    .find(|s| s.topic == topic)
+                    .map(|schema| SchemaConfig {
+                        subject: schema.subject.clone(),
+                        schema_type: schema.schema_type.clone(),
+                        schema_file: schema.schema_file.clone(),
+                        auto_register: schema.auto_register,
+                        version_strategy: schema.version_strategy.clone(),
+                    });
+
+                ProducerConfig {
+                    topic,
+                    partitions,
+                    reliable_dispatch,
+                    schema_config, // Now includes schema if configured
+                }
             })
             .collect();
 

@@ -4,6 +4,7 @@
 //! with environment variable overrides for secrets.
 
 use anyhow::{Context, Result};
+use danube_connect_core::ConnectorConfig;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
@@ -12,8 +13,9 @@ use std::path::Path;
 /// Root configuration for the webhook source connector
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WebhookSourceConfig {
-    /// Core Danube connection settings
-    pub core: CoreConfig,
+    /// Core Danube connection settings + schemas (flattened)
+    #[serde(flatten)]
+    pub core: ConnectorConfig,
     /// HTTP server settings
     pub server: ServerConfig,
     /// Platform-wide authentication (applies to all endpoints)
@@ -25,21 +27,6 @@ pub struct WebhookSourceConfig {
     pub endpoints: Vec<EndpointConfig>,
 }
 
-/// Core Danube connection configuration
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct CoreConfig {
-    /// Danube broker service URL
-    pub danube_service_url: String,
-    /// Unique connector name
-    pub connector_name: String,
-    /// Optional metrics port (default: 9090)
-    #[serde(default = "default_metrics_port")]
-    pub metrics_port: u16,
-}
-
-fn default_metrics_port() -> u16 {
-    9090
-}
 
 /// HTTP server configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -293,13 +280,6 @@ mod tests {
 
     #[test]
     fn test_default_values() {
-        let config = CoreConfig {
-            danube_service_url: "http://localhost:6650".to_string(),
-            connector_name: "test".to_string(),
-            metrics_port: default_metrics_port(),
-        };
-        assert_eq!(config.metrics_port, 9090);
-
         let server = ServerConfig {
             host: default_host(),
             port: default_port(),

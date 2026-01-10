@@ -1,15 +1,50 @@
-# HTTP/Webhook Source Connector Configuration
-# Example configuration for receiving webhooks and publishing to Danube
+# =============================================================================
+# HTTP/Webhook Source Connector - Example Configuration
+# =============================================================================
+# This example demonstrates schema validation testing for webhook events
 
-[core]
-# Danube broker service URL (overridden by DANUBE_SERVICE_URL env var)
+# Core Danube settings (flattened from ConnectorConfig)
 danube_service_url = "http://danube-broker:6650"
-
-# Unique connector name (overridden by CONNECTOR_NAME env var)
 connector_name = "webhook-source-example"
 
-# Metrics port for Prometheus (default: 9090)
+# Processing settings
+[processing]
+batch_size = 100
+poll_interval_ms = 100
 metrics_port = 9090
+
+# Retry settings
+[retry]
+initial_interval_ms = 1000
+max_interval_ms = 60000
+max_retries = 5
+
+# =============================================================================
+# Schema Registry Configuration (Optional)
+# =============================================================================
+# Define schemas for topics that require validation
+
+# Schema for Stripe payment webhooks
+[[schemas]]
+topic = "/stripe/payments"
+subject = "stripe-payment-v1"
+schema_type = "json_schema"
+schema_file = "/etc/schemas/payment.json"
+auto_register = true
+version_strategy = "latest"
+
+# Schema for generic webhooks (string schema)
+[[schemas]]
+topic = "/webhooks/generic"
+subject = "generic-webhook-v1"
+schema_type = "string"
+schema_file = ""
+auto_register = true
+version_strategy = "latest"
+
+# =============================================================================
+# Connector-Specific Settings
+# =============================================================================
 
 [server]
 # Host to bind to (default: 0.0.0.0)
