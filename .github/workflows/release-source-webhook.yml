@@ -23,14 +23,15 @@ jobs:
           targets: x86_64-unknown-linux-gnu
 
       - name: Build
-        run: cargo build --release --package danube-source-webhook --target x86_64-unknown-linux-gnu
+        working-directory: source-webhook
+        run: cargo build --release --target x86_64-unknown-linux-gnu
 
       - name: Upload Linux binaries
         uses: actions/upload-artifact@v4
         with:
           name: connector-binaries-linux
           path: |
-            target/x86_64-unknown-linux-gnu/release/danube-source-webhook
+            source-webhook/target/x86_64-unknown-linux-gnu/release/danube-source-webhook
 
   build-macos:
     runs-on: macos-latest
@@ -47,14 +48,15 @@ jobs:
           targets: aarch64-apple-darwin
 
       - name: Build for Apple Silicon
-        run: cargo build --release --package danube-source-webhook --target aarch64-apple-darwin
+        working-directory: source-webhook
+        run: cargo build --release --target aarch64-apple-darwin
 
       - name: Upload MacOS Apple Silicon binaries
         uses: actions/upload-artifact@v4
         with:
           name: connector-binaries-macos
           path: |
-            target/aarch64-apple-darwin/release/danube-source-webhook
+            source-webhook/target/aarch64-apple-darwin/release/danube-source-webhook
 
   build-windows:
     runs-on: windows-latest
@@ -68,14 +70,15 @@ jobs:
           targets: x86_64-pc-windows-msvc
 
       - name: Build for Windows
-        run: cargo build --release --package danube-source-webhook --target x86_64-pc-windows-msvc
+        working-directory: source-webhook
+        run: cargo build --release --target x86_64-pc-windows-msvc
 
       - name: Upload Windows binaries
         uses: actions/upload-artifact@v4
         with:
           name: connector-binaries-windows
           path: |
-            target/x86_64-pc-windows-msvc/release/danube-source-webhook.exe
+            source-webhook/target/x86_64-pc-windows-msvc/release/danube-source-webhook.exe
 
   docker-build:
     strategy:
@@ -98,6 +101,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Extract version from tag
+        id: version
+        run: |
+          # Extract version from tag: source-webhook/v0.2.0 -> v0.2.0
+          VERSION="${GITHUB_REF_NAME#source-webhook/}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -114,8 +124,8 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository_owner }}/danube-source-webhook
           tags: |
-            type=ref,event=tag
-            type=raw,value=latest,enable=true
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=raw,value=latest
 
       - name: Build and push Source-Webhook Connector image (${{ matrix.arch }})
         uses: docker/build-push-action@v5
@@ -125,7 +135,7 @@ jobs:
           platforms: ${{ matrix.platform }}
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/danube-source-webhook:${{ github.ref_name }}-${{ matrix.arch }}
+            ghcr.io/${{ github.repository_owner }}/danube-source-webhook:${{ steps.version.outputs.version }}-${{ matrix.arch }}
             ghcr.io/${{ github.repository_owner }}/danube-source-webhook:latest-${{ matrix.arch }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=source-webhook-${{ matrix.arch }}
@@ -139,6 +149,13 @@ jobs:
       packages: write
       id-token: write
     steps:
+      - name: Extract version from tag
+        id: version
+        run: |
+          # Extract version from tag: source-webhook/v0.2.0 -> v0.2.0
+          VERSION="${GITHUB_REF_NAME#source-webhook/}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -152,14 +169,14 @@ jobs:
       - name: Create multi-arch manifests
         run: |
           set -euo pipefail
-          TAG="${{ github.ref_name }}"
+          VERSION="${{ steps.version.outputs.version }}"
           IMAGE="ghcr.io/${{ github.repository_owner }}/danube-source-webhook"
 
           docker buildx imagetools create \
-            -t ${IMAGE}:${TAG} \
+            -t ${IMAGE}:${VERSION} \
             -t ${IMAGE}:latest \
-            ${IMAGE}:${TAG}-amd64 \
-            ${IMAGE}:${TAG}-arm64
+            ${IMAGE}:${VERSION}-amd64 \
+            ${IMAGE}:${VERSION}-arm64
 
   release:
     needs: [build-linux, build-macos, build-windows, docker-manifest]
@@ -203,45 +220,57 @@ jobs:
           cd release
           sha256sum * > checksums.txt
 
+      - name: Extract version from tag
+        id: version
+        run: |
+          # Extract version from tag: source-webhook/v0.2.0 -> v0.2.0
+          VERSION="${GITHUB_REF_NAME#source-webhook/}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
       - name: Compose release body
         shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
-          cat > RELEASE_BODY.md <<'EOF'
-          # Source-Webhook Connector ${{ github.ref_name }}
+          cat > RELEASE_BODY.md <<EOF
+          # Source-Webhook Connector ${VERSION}
 
           HTTP/Webhook source connector for Danube messaging platform with schema validation support.
 
           ## Binaries
 
-          - **Linux**: [danube-source-webhook-linux](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/danube-source-webhook-linux)
-          - **MacOS (Apple Silicon)**: [danube-source-webhook-macos](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/danube-source-webhook-macos)
-          - **Windows**: [danube-source-webhook-windows.exe](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/danube-source-webhook-windows.exe)
+          - **Linux**: [danube-source-webhook-linux](https://github.com/${REPO}/releases/download/${TAG}/danube-source-webhook-linux)
+          - **MacOS (Apple Silicon)**: [danube-source-webhook-macos](https://github.com/${REPO}/releases/download/${TAG}/danube-source-webhook-macos)
+          - **Windows**: [danube-source-webhook-windows.exe](https://github.com/${REPO}/releases/download/${TAG}/danube-source-webhook-windows.exe)
 
           ## Checksums
 
-          - **SHA256**: [checksums.txt](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/checksums.txt)
+          - **SHA256**: [checksums.txt](https://github.com/${REPO}/releases/download/${TAG}/checksums.txt)
           
           ## Docker Image
 
           **Multi-arch image (linux/amd64, linux/arm64)**:
           
-          ```bash
-          docker pull ghcr.io/${{ github.repository_owner }}/danube-source-webhook:${{ github.ref_name }}
-          ```
+          \`\`\`bash
+          docker pull ghcr.io/${OWNER}/danube-source-webhook:${VERSION}
+          \`\`\`
           
           ### Quick Start with Docker
           
-          ```bash
+          \`\`\`bash
           # Run the connector
-          docker run -d \
-            --name webhook-connector \
-            -p 8080:8080 \
-            -v $(pwd)/connector.toml:/etc/connector.toml:ro \
-            -v $(pwd)/schemas:/etc/schemas:ro \
-            -e CONNECTOR_CONFIG_PATH=/etc/connector.toml \
-            -e WEBHOOK_API_KEY=your-secret-key \
-            ghcr.io/${{ github.repository_owner }}/danube-source-webhook:${{ github.ref_name }}
+          docker run -d \\
+            --name webhook-connector \\
+            -p 8080:8080 \\
+            -v \$(pwd)/connector.toml:/etc/connector.toml:ro \\
+            -v \$(pwd)/schemas:/etc/schemas:ro \\
+            -e CONNECTOR_CONFIG_PATH=/etc/connector.toml \\
+            -e WEBHOOK_API_KEY=your-secret-key \\
+            ghcr.io/${OWNER}/danube-source-webhook:${VERSION}
           
           # Health check
           curl http://localhost:8080/health
@@ -264,18 +293,18 @@ jobs:
           
           ### Verify Downloads
           
-          ```bash
+          \`\`\`bash
           # Download and verify checksums
-          curl -LO https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/checksums.txt
-          curl -LO https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/danube-source-webhook-linux
+          curl -LO https://github.com/${REPO}/releases/download/${TAG}/checksums.txt
+          curl -LO https://github.com/${REPO}/releases/download/${TAG}/danube-source-webhook-linux
           sha256sum -c checksums.txt
-          ```
+          \`\`\`
 
           ## Documentation
 
-          - **Configuration Guide**: [source-webhook/config/README.md](https://github.com/${{ github.repository }}/tree/${{ github.ref_name }}/source-webhook/config)
-          - **Example Setup**: [source-webhook/example/README.md](https://github.com/${{ github.repository }}/tree/${{ github.ref_name }}/source-webhook/example)
-          - **Main README**: [source-webhook/README.md](https://github.com/${{ github.repository }}/tree/${{ github.ref_name }}/source-webhook)
+          - **Configuration Guide**: [source-webhook/config/README.md](https://github.com/${REPO}/tree/${TAG}/source-webhook/config)
+          - **Example Setup**: [source-webhook/example/README.md](https://github.com/${REPO}/tree/${TAG}/source-webhook/example)
+          - **Main README**: [source-webhook/README.md](https://github.com/${REPO}/tree/${TAG}/source-webhook)
 
           ## Features
 
@@ -291,7 +320,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ github.ref_name }}
-          name: Source-Webhook Connector ${{ github.ref_name }}
+          name: Source-Webhook Connector ${{ steps.version.outputs.version }}
           draft: false
           prerelease: false
           files: |
