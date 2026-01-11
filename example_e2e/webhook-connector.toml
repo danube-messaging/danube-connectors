@@ -1,0 +1,66 @@
+# =============================================================================
+# Webhook Source Connector Configuration - End-to-End Example
+# =============================================================================
+
+# Core Danube settings
+danube_service_url = "http://danube-broker:6650"
+connector_name = "webhook-source-e2e"
+
+# Processing settings
+[processing]
+batch_size = 100
+poll_interval_ms = 100
+metrics_port = 9090
+
+# Retry settings
+[retry]
+initial_interval_ms = 1000
+max_interval_ms = 60000
+max_retries = 5
+
+# =============================================================================
+# Schema Registry Configuration
+# =============================================================================
+
+# Schema for Stripe payment webhooks
+[[schemas]]
+topic = "/stripe/payments"
+subject = "stripe-payment-v1"
+schema_type = "json_schema"
+schema_file = "/etc/schemas/payment.json"
+auto_register = true
+version_strategy = "latest"
+
+# =============================================================================
+# Webhook Server Configuration
+# =============================================================================
+
+[server]
+host = "0.0.0.0"
+port = 8080
+timeout_seconds = 30
+max_body_size = 1048576
+
+# Platform-wide authentication
+[auth]
+type = "apikey"
+secret_env = "WEBHOOK_API_KEY"
+header = "x-api-key"
+
+# Rate limiting
+[rate_limit]
+requests_per_second = 100
+burst_size = 200
+per_ip_enabled = true
+per_ip_requests_per_second = 10
+
+# =============================================================================
+# Webhook Endpoints
+# =============================================================================
+
+# Stripe payment webhooks → /stripe/payments topic (with schema validation)
+[[endpoints]]
+path = "/webhooks/stripe/payments"
+danube_topic = "/stripe/payments"
+partitions = 4
+reliable_dispatch = false

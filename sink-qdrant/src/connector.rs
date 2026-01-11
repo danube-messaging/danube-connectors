@@ -315,9 +315,8 @@ impl SinkConnector for QdrantSinkConnector {
         )?;
 
         debug!(
-            "Transformed message from topic {} offset {} into Qdrant point for collection '{}'",
+            "Transformed message from topic {} into Qdrant point for collection '{}'",
             record.topic(),
-            record.offset(),
             context.mapping.collection_name
         );
 

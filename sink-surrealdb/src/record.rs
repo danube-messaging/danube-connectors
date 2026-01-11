@@ -87,9 +87,8 @@ fn add_metadata(data: &mut Value, record: &SinkRecord) {
 
     let metadata = json!({
         "danube_topic": record.topic(),
-        "danube_offset": record.offset(),
         "danube_timestamp": datetime.to_rfc3339(),
-        "danube_message_id": record.message_id(),
+        "danube_producer": record.producer_name(),
     });
 
     if let Value::Object(map) = data {

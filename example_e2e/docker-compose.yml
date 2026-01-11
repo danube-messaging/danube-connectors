@@ -1,0 +1,203 @@
+# =============================================================================
+# End-to-End Example: Webhook Source → Danube → SurrealDB Sink
+# =============================================================================
+# This example demonstrates a complete data pipeline:
+#   External Webhooks (Stripe/GitHub) → Webhook Connector → Danube Broker → SurrealDB Sink → SurrealDB
+#
+# Components:
+#   - etcd: Metadata storage for Danube
+#   - danube-broker: Message broker
+#   - webhook-connector: Receives webhooks and publishes to Danube (pre-built image)
+#   - surrealdb-sink: Consumes from Danube and writes to SurrealDB (pre-built image)
+#   - surrealdb: Database
+#
+# Usage:
+#   docker-compose up -d
+#   docker-compose logs -f webhook-connector surrealdb-sink
+#   docker-compose down -v
+
+services:
+  # ===========================================================================
+  # Infrastructure: etcd + Danube Broker
+  # ===========================================================================
+
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.9
+    container_name: e2e-etcd
+    environment:
+      - ETCDCTL_API=3
+      - ETCD_NAME=e2e-etcd
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_INITIAL_CLUSTER=e2e-etcd=http://etcd:2380
+      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
+      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd:2380
+      - ETCD_INITIAL_CLUSTER_STATE=new
+      - ETCD_INITIAL_CLUSTER_TOKEN=danube-e2e-cluster
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+    networks:
+      - danube-e2e
+    volumes:
+      - etcd_data:/etcd-data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "etcdctl",
+          "--endpoints=http://127.0.0.1:2379",
+          "endpoint",
+          "health",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  danube-broker:
+    image: ghcr.io/danube-messaging/danube-broker:latest
+    container_name: e2e-danube-broker
+    ports:
+      - "6650:6650" # Danube service port
+      - "50051:50051" # Admin API
+      - "9040:9040" # Prometheus metrics
+    environment:
+      - RUST_LOG=danube_broker=info
+    volumes:
+      - ./danube_broker.yml:/etc/danube_broker.yml:ro
+      - broker_wal:/data/wal
+    depends_on:
+      etcd:
+        condition: service_healthy
+    networks:
+      - danube-e2e
+    command:
+      - --config-file
+      - /etc/danube_broker.yml
+      - --broker-addr
+      - 0.0.0.0:6650
+      - --admin-addr
+      - 0.0.0.0:50051
+      - --prom-exporter
+      - 0.0.0.0:9040
+      - --advertised-addr
+      - danube-broker:6650
+
+  # ===========================================================================
+  # Schema and Topic Initialization
+  # ===========================================================================
+
+  topic-init:
+    image: ghcr.io/danube-messaging/danube-cli:latest
+    container_name: e2e-topic-init
+    depends_on:
+      danube-broker:
+        condition: service_started
+    environment:
+      - DANUBE_ADMIN_ENDPOINT=http://danube-broker:50051
+    volumes:
+      - ./schemas:/schemas:ro
+    networks:
+      - danube-e2e
+    command:
+      - sh
+      - -c
+      - |
+        echo '=== Initializing Danube Topics and Schemas ==='
+        echo 'Waiting for broker to be fully ready...'
+        sleep 10
+
+        # Create namespace
+        echo 'Creating namespace: stripe...'
+        danube-admin-cli namespaces create stripe || echo 'Namespace may already exist'
+
+        # Register payment schema
+        echo 'Registering schema: stripe-payment-v1...'
+        danube-admin-cli schemas register stripe-payment-v1 \
+          --schema-type json_schema \
+          --file /schemas/payment.json || echo 'Schema may already exist'
+
+        echo '=== Initialization Complete ==='
+    restart: "no"
+
+  # ===========================================================================
+  # Source: Webhook Connector (Pre-built Image)
+  # ===========================================================================
+
+  webhook-connector:
+    image: ghcr.io/danube-messaging/danube-source-webhook:v0.2.0
+    container_name: e2e-webhook-connector
+    depends_on:
+      topic-init:
+        condition: service_completed_successfully
+    ports:
+      - "8080:8080" # Webhook HTTP server
+      - "9091:9090" # Metrics
+    volumes:
+      - ./webhook-connector.toml:/etc/connector.toml:ro
+      - ./schemas:/etc/schemas:ro
+    environment:
+      - CONNECTOR_CONFIG_PATH=/etc/connector.toml
+      - DANUBE_SERVICE_URL=http://danube-broker:6650
+      - CONNECTOR_NAME=webhook-source-e2e
+      - WEBHOOK_API_KEY=demo-api-key-e2e-12345
+      - RUST_LOG=info,danube_source_webhook=debug,danube_connect_core=debug, danube_client=debug
+    networks:
+      - danube-e2e
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ===========================================================================
+  # Database: SurrealDB
+  # ===========================================================================
+
+  surrealdb:
+    image: surrealdb/surrealdb:latest
+    container_name: e2e-surrealdb
+    ports:
+      - "8000:8000" # HTTP/WebSocket API
+    command: start --log info --user root --pass root memory
+    networks:
+      - danube-e2e
+
+  # ===========================================================================
+  # Sink: SurrealDB Connector (Pre-built Image)
+  # ===========================================================================
+
+  surrealdb-sink:
+    image: ghcr.io/danube-messaging/danube-sink-surrealdb:v0.2.0
+    container_name: e2e-surrealdb-sink
+    depends_on:
+      webhook-connector:
+        condition: service_healthy
+      surrealdb:
+        condition: service_started
+    volumes:
+      - ./surrealdb-sink-connector.toml:/etc/connector.toml:ro
+    environment:
+      - CONNECTOR_CONFIG_PATH=/etc/connector.toml
+      - DANUBE_SERVICE_URL=http://danube-broker:6650
+      - CONNECTOR_NAME=surrealdb-sink-e2e
+      - SURREALDB_URL=surrealdb:8000
+      - SURREALDB_USERNAME=root
+      - SURREALDB_PASSWORD=root
+      - RUST_LOG=info,danube_sink_surrealdb=debug,danube_connect_core=debug, danube_client=debug
+    ports:
+      - "9092:9090" # Metrics
+    networks:
+      - danube-e2e
+    restart: unless-stopped
+
+networks:
+  danube-e2e:
+    driver: bridge
+
+volumes:
+  etcd_data:
+  broker_wal:

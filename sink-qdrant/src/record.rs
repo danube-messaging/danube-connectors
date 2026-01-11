@@ -67,8 +67,8 @@ fn generate_point_id(message: &VectorMessage, record: &SinkRecord) -> u64 {
         return hash_string_to_u64(id);
     }
 
-    // Generate ID from topic + offset to ensure uniqueness across topics
-    let composite_key = format!("{}:{}", record.topic(), record.offset());
+    // Generate ID from topic + timestamp to ensure uniqueness across topics
+    let composite_key = format!("{}:{}", record.topic(), record.publish_time());
     hash_string_to_u64(&composite_key)
 }
 
@@ -101,10 +101,6 @@ fn build_payload(
         payload.insert(
             "_danube_topic".to_string(),
             Value::from(record.topic().to_string()),
-        );
-        payload.insert(
-            "_danube_offset".to_string(),
-            Value::from(record.offset() as i64),
         );
         payload.insert(
             "_danube_timestamp".to_string(),

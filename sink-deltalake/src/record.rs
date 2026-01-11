@@ -193,7 +193,6 @@ fn extract_value_by_path_parts<'a>(value: &'a Value, path_parts: &[String]) -> O
     Some(current)
 }
 
-
 /// Build metadata array with Danube message metadata as JSON
 fn build_metadata_array(records: &[SinkRecord]) -> ConnectorResult<ArrayRef> {
     let metadata_strings: Vec<String> = records
@@ -201,7 +200,6 @@ fn build_metadata_array(records: &[SinkRecord]) -> ConnectorResult<ArrayRef> {
         .map(|record| {
             let metadata = serde_json::json!({
                 "topic": record.topic(),
-                "offset": record.offset(),
                 "timestamp": record.publish_time(),
                 "timestamp_iso": Utc::now().to_rfc3339(),
             });
@@ -218,7 +216,6 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-
     #[test]
     fn test_extract_value_by_path_parts_optimized() {
         let value = json!({
@@ -232,7 +229,11 @@ mod tests {
         });
 
         // Test nested path
-        let nested_parts = vec!["user".to_string(), "profile".to_string(), "name".to_string()];
+        let nested_parts = vec![
+            "user".to_string(),
+            "profile".to_string(),
+            "name".to_string(),
+        ];
         assert_eq!(
             extract_value_by_path_parts(&value, &nested_parts).and_then(|v| v.as_str()),
             Some("Alice")
@@ -246,7 +247,11 @@ mod tests {
         );
 
         // Test missing path
-        let missing_parts = vec!["user".to_string(), "profile".to_string(), "missing".to_string()];
+        let missing_parts = vec![
+            "user".to_string(),
+            "profile".to_string(),
+            "missing".to_string(),
+        ];
         assert_eq!(extract_value_by_path_parts(&value, &missing_parts), None);
     }
 

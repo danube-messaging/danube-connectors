@@ -444,9 +444,8 @@ impl SinkConnector for DeltaLakeSinkConnector {
 
     async fn process(&mut self, record: SinkRecord) -> ConnectorResult<()> {
         debug!(
-            "🔵 process() called - topic: {}, offset: {}",
-            record.topic(),
-            record.offset()
+            "🔵 process() called - topic: {}",
+            record.topic()
         );
 
         // Add to buffer

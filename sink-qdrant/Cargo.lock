@@ -292,9 +292,9 @@ dependencies = [
 
 [[package]]
 name = "danube-connect-core"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a023cdb3da669277d27d694f6ba93c42855c49ea4cfc4ec84c0d7a060a88b7e0"
+checksum = "9f33aa3ea121d0c59aa35546742c4d7ffc235272de7a89f243acdaa23f26c237"
 dependencies = [
  "async-trait",
  "base64",
@@ -330,7 +330,7 @@ dependencies = [
 
 [[package]]
 name = "danube-sink-qdrant"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "async-trait",
  "danube-connect-core",
