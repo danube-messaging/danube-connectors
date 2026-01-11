@@ -171,7 +171,7 @@ services:
   # ===========================================================================
 
   surrealdb-sink:
-    image: ghcr.io/danube-messaging/danube-sink-surrealdb:v0.2.0
+    image: ghcr.io/danube-messaging/danube-sink-surrealdb:v0.2.1
     container_name: e2e-surrealdb-sink
     depends_on:
       webhook-connector:
