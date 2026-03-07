@@ -4,11 +4,10 @@ use async_trait::async_trait;
 use chrono::Utc;
 use danube_connect_core::{
     ConnectorConfig, ConnectorError, ConnectorResult, Offset, ProducerConfig, SchemaConfig,
-    SchemaMapping, SourceConnector, SourceRecord,
+    SchemaMapping, SourceConnector, SourceConnectorMode, SourceRecord, SourceSender,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::sync::RwLock;
 use tracing::{error, info};
 
@@ -20,10 +19,8 @@ pub struct WebhookConnector {
     config: WebhookSourceConfig,
     /// Schema mappings for topics
     schemas: Vec<SchemaMapping>,
-    /// Channel receiver for incoming webhook records
-    message_rx: Option<Receiver<SourceRecord>>,
     /// Channel sender for webhook handler (shared with HTTP server)
-    message_tx: Option<Sender<SourceRecord>>,
+    message_tx: Option<SourceSender>,
     /// Endpoint configurations mapped by path
     endpoints: Arc<RwLock<HashMap<String, EndpointConfig>>>,
     /// HTTP server handle
@@ -42,7 +39,6 @@ impl WebhookConnector {
         Self {
             config,
             schemas,
-            message_rx: None,
             message_tx: None,
             endpoints: Arc::new(RwLock::new(endpoints)),
             server_handle: None,
@@ -51,7 +47,7 @@ impl WebhookConnector {
 
     /// Get the message sender for the HTTP server
     #[allow(dead_code)]
-    pub fn message_sender(&self) -> Option<Sender<SourceRecord>> {
+    pub fn message_sender(&self) -> Option<SourceSender> {
         self.message_tx.clone()
     }
 
@@ -142,17 +138,28 @@ impl SourceConnector for WebhookConnector {
             );
         }
 
-        // Create channel for message passing from HTTP server to runtime
-        let (message_tx, message_rx) = mpsc::channel(1000);
+        info!("Webhook Source Connector initialized successfully");
+        Ok(())
+    }
 
-        self.message_tx = Some(message_tx);
-        self.message_rx = Some(message_rx);
+    fn mode(&self) -> SourceConnectorMode {
+        SourceConnectorMode::Streaming
+    }
+
+    async fn start_streaming(&mut self, sender: SourceSender) -> ConnectorResult<()> {
+        if self.server_handle.is_some() {
+            return Err(ConnectorError::config(
+                "Webhook source streaming has already been started",
+            ));
+        }
+
+        self.message_tx = Some(sender.clone());
 
         // Start HTTP server in background task
         // We need to create a shared state for the server
         let server_config = self.config.clone();
         let server_endpoints = Arc::clone(&self.endpoints);
-        let server_tx = self.message_tx.clone().unwrap();
+        let server_tx = sender;
 
         let server_handle = tokio::spawn(async move {
             if let Err(e) =
@@ -165,7 +172,7 @@ impl SourceConnector for WebhookConnector {
 
         self.server_handle = Some(server_handle);
 
-        info!("Webhook Source Connector initialized successfully");
+        info!("Webhook Source Connector streaming started successfully");
         info!("HTTP server started on {}", self.config.bind_address());
         Ok(())
     }
@@ -222,37 +229,6 @@ impl SourceConnector for WebhookConnector {
         }
 
         Ok(producer_configs)
-    }
-
-    async fn poll(&mut self) -> ConnectorResult<Vec<SourceRecord>> {
-        let mut records = Vec::new();
-
-        // Receive messages from channel with timeout
-        if let Some(ref mut rx) = self.message_rx {
-            match tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await {
-                Ok(Some(record)) => {
-                    records.push(record);
-
-                    // Try to receive more messages without blocking
-                    while let Ok(record) = rx.try_recv() {
-                        records.push(record);
-                        // Limit batch size
-                        if records.len() >= 100 {
-                            break;
-                        }
-                    }
-                }
-                Ok(None) => {
-                    // Channel closed
-                    return Err(ConnectorError::fatal("Webhook channel closed"));
-                }
-                Err(_) => {
-                    // Timeout - no messages available, this is normal
-                }
-            }
-        }
-
-        Ok(records)
     }
 
     async fn commit(&mut self, _offsets: Vec<Offset>) -> ConnectorResult<()> {

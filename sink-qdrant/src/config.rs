@@ -1,6 +1,9 @@
 //! Configuration for the Qdrant Sink Connector
 
-use danube_connect_core::{ConnectorConfig, ConnectorResult, SubscriptionType};
+use danube_connect_core::{
+    ConfigEnvOverrides, ConfigValidate, ConnectorConfig, ConnectorConfigLoader, ConnectorResult,
+    SubscriptionType,
+};
 use serde::{Deserialize, Serialize};
 use std::env;
 
@@ -17,42 +20,20 @@ pub struct QdrantSinkConfig {
 
 impl QdrantSinkConfig {
     /// Load configuration from TOML file
-    /// 
+    ///
     /// The config file path must be specified via CONNECTOR_CONFIG_PATH environment variable.
     /// Environment variables can override secrets (API key) and URLs.
     pub fn load() -> ConnectorResult<Self> {
-        let config_path = env::var("CONNECTOR_CONFIG_PATH")
-            .map_err(|_| danube_connect_core::ConnectorError::config(
-                "CONNECTOR_CONFIG_PATH environment variable must be set to the path of the TOML configuration file"
-            ))?;
-        
-        Self::from_file(&config_path)
+        ConnectorConfigLoader::new().load()
     }
 
     /// Load configuration from a TOML file
     pub fn from_file(path: &str) -> ConnectorResult<Self> {
-        let content = std::fs::read_to_string(path).map_err(|e| {
-            danube_connect_core::ConnectorError::config(format!(
-                "Failed to read config file {}: {}",
-                path, e
-            ))
-        })?;
-
-        let mut config: Self = toml::from_str(&content).map_err(|e| {
-            danube_connect_core::ConnectorError::config(format!(
-                "Failed to parse config file {}: {}",
-                path, e
-            ))
-        })?;
-
-        // Apply environment variable overrides for secrets and URLs
-        config.apply_env_overrides();
-
-        Ok(config)
+        ConnectorConfigLoader::new().from_file(path)
     }
 
     /// Apply environment variable overrides for secrets and connection details
-    /// 
+    ///
     /// Only overrides sensitive data that shouldn't be in config files:
     /// - API key (secret)
     /// - Connection URLs (for different environments)
@@ -62,7 +43,7 @@ impl QdrantSinkConfig {
         if let Ok(danube_url) = env::var("DANUBE_SERVICE_URL") {
             self.core.danube_service_url = danube_url;
         }
-        
+
         if let Ok(connector_name) = env::var("CONNECTOR_NAME") {
             self.core.connector_name = connector_name;
         }
@@ -80,7 +61,34 @@ impl QdrantSinkConfig {
 
     /// Validate all configuration
     pub fn validate(&self) -> ConnectorResult<()> {
-        // Core config validation is handled by danube-connect-core runtime
+        self.validate_config()
+    }
+}
+
+impl ConfigEnvOverrides for QdrantSinkConfig {
+    fn apply_env_overrides(&mut self) -> ConnectorResult<()> {
+        if let Ok(danube_url) = env::var("DANUBE_SERVICE_URL") {
+            self.core.danube_service_url = danube_url;
+        }
+
+        if let Ok(connector_name) = env::var("CONNECTOR_NAME") {
+            self.core.connector_name = connector_name;
+        }
+
+        if let Ok(url) = env::var("QDRANT_URL") {
+            self.qdrant.url = url;
+        }
+
+        if let Ok(api_key) = env::var("QDRANT_API_KEY") {
+            self.qdrant.api_key = Some(api_key);
+        }
+
+        Ok(())
+    }
+}
+
+impl ConfigValidate for QdrantSinkConfig {
+    fn validate_config(&self) -> ConnectorResult<()> {
         self.qdrant.validate()?;
         Ok(())
     }
@@ -242,27 +250,31 @@ impl QdrantConfig {
         // Validate each topic mapping
         for (idx, mapping) in self.topic_mappings.iter().enumerate() {
             if mapping.topic.is_empty() {
-                return Err(danube_connect_core::ConnectorError::config(
-                    format!("Topic mapping {} has empty topic", idx),
-                ));
+                return Err(danube_connect_core::ConnectorError::config(format!(
+                    "Topic mapping {} has empty topic",
+                    idx
+                )));
             }
 
             if mapping.collection_name.is_empty() {
-                return Err(danube_connect_core::ConnectorError::config(
-                    format!("Topic mapping {} has empty collection name", idx),
-                ));
+                return Err(danube_connect_core::ConnectorError::config(format!(
+                    "Topic mapping {} has empty collection name",
+                    idx
+                )));
             }
 
             if mapping.vector_dimension == 0 {
-                return Err(danube_connect_core::ConnectorError::config(
-                    format!("Topic mapping {} has zero vector dimension", idx),
-                ));
+                return Err(danube_connect_core::ConnectorError::config(format!(
+                    "Topic mapping {} has zero vector dimension",
+                    idx
+                )));
             }
 
             if mapping.subscription.is_empty() {
-                return Err(danube_connect_core::ConnectorError::config(
-                    format!("Topic mapping {} has empty subscription", idx),
-                ));
+                return Err(danube_connect_core::ConnectorError::config(format!(
+                    "Topic mapping {} has empty subscription",
+                    idx
+                )));
             }
         }
 

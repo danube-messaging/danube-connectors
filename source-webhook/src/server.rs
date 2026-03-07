@@ -19,8 +19,7 @@ use crate::auth;
 use crate::config::{EndpointConfig, WebhookSourceConfig};
 use crate::connector::WebhookConnector;
 use crate::rate_limit;
-use danube_connect_core::SourceRecord;
-use tokio::sync::mpsc::Sender;
+use danube_connect_core::SourceSender;
 use tokio::sync::RwLock;
 
 /// Shared application state
@@ -28,14 +27,14 @@ use tokio::sync::RwLock;
 pub struct AppState {
     pub config: WebhookSourceConfig,
     pub endpoints: Arc<RwLock<HashMap<String, EndpointConfig>>>,
-    pub message_tx: Sender<SourceRecord>,
+    pub message_tx: SourceSender,
 }
 
 /// Start the HTTP server with state components (called from connector initialize)
 pub async fn start_server_with_state(
     config: WebhookSourceConfig,
     endpoints: Arc<RwLock<HashMap<String, EndpointConfig>>>,
-    message_tx: Sender<SourceRecord>,
+    message_tx: SourceSender,
 ) -> anyhow::Result<()> {
     let bind_addr: SocketAddr = config.bind_address().parse()?;
 

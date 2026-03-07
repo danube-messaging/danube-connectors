@@ -1,13 +1,13 @@
 //! MQTT source connector implementation.
 
 use crate::config::{MqttConfig, TopicMapping};
-use danube_connect_core::SchemaMapping;
 use async_trait::async_trait;
 use danube_connect_core::{
-    ConnectorConfig, ConnectorError, ConnectorResult, Offset, SourceConnector, SourceRecord,
+    ConnectorConfig, ConnectorError, ConnectorResult, Offset, ProducerConfig, SchemaMapping,
+    SourceConnector, SourceConnectorMode, SourceRecord, SourceSender,
 };
 use rumqttc::{AsyncClient, Event, Packet, Publish};
-use tokio::sync::mpsc::{self, Receiver, Sender};
+use tokio::task::AbortHandle;
 use tracing::{debug, error, info, warn};
 
 /// MQTT Source Connector
@@ -17,8 +17,7 @@ pub struct MqttSourceConnector {
     config: MqttConfig,
     schemas: Vec<SchemaMapping>,
     mqtt_client: Option<AsyncClient>,
-    message_rx: Option<Receiver<SourceRecord>>,
-    offset_counter: u64,
+    event_loop_abort: Option<AbortHandle>,
 }
 
 impl MqttSourceConnector {
@@ -28,8 +27,7 @@ impl MqttSourceConnector {
             config,
             schemas,
             mqtt_client: None,
-            message_rx: None,
-            offset_counter: 0,
+            event_loop_abort: None,
         }
     }
 
@@ -54,8 +52,7 @@ impl MqttSourceConnector {
             },
             schemas: vec![],
             mqtt_client: None,
-            message_rx: None,
-            offset_counter: 0,
+            event_loop_abort: None,
         }
     }
 
@@ -102,10 +99,10 @@ impl MqttSourceConnector {
     /// Spawn MQTT event loop task
     fn spawn_event_loop(
         mut event_loop: rumqttc::EventLoop,
-        message_tx: Sender<SourceRecord>,
+        sender: SourceSender,
         topic_mappings: Vec<TopicMapping>,
         include_metadata: bool,
-    ) {
+    ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             info!("MQTT event loop started");
 
@@ -132,8 +129,8 @@ impl MqttSourceConnector {
                                         include_metadata,
                                     );
 
-                                    if let Err(e) = message_tx.send(record).await {
-                                        error!("Failed to send message to channel: {}", e);
+                                    if let Err(e) = sender.send(record).await {
+                                        error!("Failed to send message to source runtime: {}", e);
                                         break;
                                     }
                                 } else {
@@ -168,13 +165,16 @@ impl MqttSourceConnector {
                     }
                     Err(e) => {
                         error!("MQTT event loop error: {}", e);
+                        if sender.is_closed() {
+                            break;
+                        }
                         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                     }
                 }
             }
 
             info!("MQTT event loop stopped");
-        });
+        })
     }
 
     /// Static version of publish_to_record for use in spawned task
@@ -228,10 +228,11 @@ impl MqttSourceConnector {
             mapping.mqtt_topic == mqtt_topic || Self::topic_matches(&mapping.mqtt_topic, mqtt_topic)
         })
     }
-    
+
     /// Find schema configuration for a Danube topic
     fn find_schema_config(&self, danube_topic: &str) -> Option<danube_connect_core::SchemaConfig> {
-        self.schemas.iter()
+        self.schemas
+            .iter()
             .find(|s| s.topic == danube_topic)
             .map(|schema| {
                 // Convert SchemaMapping to SchemaConfig
@@ -280,6 +281,21 @@ impl SourceConnector for MqttSourceConnector {
             );
         }
 
+        info!("MQTT Source Connector initialized successfully");
+        Ok(())
+    }
+
+    fn mode(&self) -> SourceConnectorMode {
+        SourceConnectorMode::Streaming
+    }
+
+    async fn start_streaming(&mut self, sender: SourceSender) -> ConnectorResult<()> {
+        if self.mqtt_client.is_some() {
+            return Err(ConnectorError::config(
+                "MQTT source streaming has already been started",
+            ));
+        }
+
         // Create MQTT client
         let mqtt_options = self.config.mqtt_options();
         let (client, mut event_loop) = AsyncClient::new(mqtt_options, 100);
@@ -304,25 +320,22 @@ impl SourceConnector for MqttSourceConnector {
                 })?;
         }
 
-        // Create channel for message passing
-        let (message_tx, message_rx) = mpsc::channel(1000);
-
         // Spawn event loop in background task
-        Self::spawn_event_loop(
+        let event_loop_handle = Self::spawn_event_loop(
             event_loop,
-            message_tx,
+            sender,
             self.config.topic_mappings.clone(),
             self.config.include_metadata,
         );
 
         self.mqtt_client = Some(client);
-        self.message_rx = Some(message_rx);
+        self.event_loop_abort = Some(event_loop_handle.abort_handle());
 
-        info!("MQTT Source Connector initialized successfully");
+        info!("MQTT Source Connector streaming started successfully");
         Ok(())
     }
 
-    async fn producer_configs(&self) -> ConnectorResult<Vec<danube_connect_core::ProducerConfig>> {
+    async fn producer_configs(&self) -> ConnectorResult<Vec<ProducerConfig>> {
         // Extract all unique Danube topics from the topic mappings
         // and create producer configurations for each
         let producer_configs: Vec<_> = self
@@ -332,8 +345,8 @@ impl SourceConnector for MqttSourceConnector {
             .map(|mapping| {
                 // Find matching schema configuration for this Danube topic
                 let schema_config = self.find_schema_config(&mapping.danube_topic);
-                
-                danube_connect_core::ProducerConfig {
+
+                ProducerConfig {
                     topic: mapping.danube_topic.clone(),
                     partitions: mapping.partitions,
                     reliable_dispatch: mapping.effective_reliable_dispatch(),
@@ -351,48 +364,19 @@ impl SourceConnector for MqttSourceConnector {
         Ok(producer_configs)
     }
 
-    async fn poll(&mut self) -> ConnectorResult<Vec<SourceRecord>> {
-        let mut records = Vec::new();
-
-        // Receive messages from channel with timeout
-        if let Some(ref mut rx) = self.message_rx {
-            match tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await {
-                Ok(Some(record)) => {
-                    records.push(record);
-
-                    // Try to receive more messages without blocking
-                    while let Ok(record) = rx.try_recv() {
-                        records.push(record);
-                        // Limit batch size
-                        if records.len() >= 100 {
-                            break;
-                        }
-                    }
-                }
-                Ok(None) => {
-                    // Channel closed
-                    return Err(ConnectorError::fatal("MQTT event loop channel closed"));
-                }
-                Err(_) => {
-                    // Timeout - no messages available
-                    debug!("MQTT poll timeout - no messages");
-                }
-            }
-        }
-
-        Ok(records)
-    }
-
     async fn commit(&mut self, offsets: Vec<Offset>) -> ConnectorResult<()> {
         // MQTT doesn't require explicit offset commits
         // Messages are acknowledged automatically by rumqttc
         debug!("Committed {} offsets", offsets.len());
-        self.offset_counter += offsets.len() as u64;
         Ok(())
     }
 
     async fn shutdown(&mut self) -> ConnectorResult<()> {
         info!("Shutting down MQTT Source Connector");
+
+        if let Some(abort_handle) = self.event_loop_abort.take() {
+            abort_handle.abort();
+        }
 
         // Disconnect MQTT client
         if let Some(client) = self.mqtt_client.take() {
@@ -401,10 +385,7 @@ impl SourceConnector for MqttSourceConnector {
             }
         }
 
-        info!(
-            "MQTT Source Connector stopped. Total messages processed: {}",
-            self.offset_counter
-        );
+        info!("MQTT Source Connector stopped");
         Ok(())
     }
 
@@ -484,7 +465,6 @@ mod tests {
     fn test_connector_creation() {
         let connector = MqttSourceConnector::new();
         assert!(connector.mqtt_client.is_none());
-        assert!(connector.message_rx.is_none());
-        assert_eq!(connector.offset_counter, 0);
+        assert!(connector.event_loop_abort.is_none());
     }
 }

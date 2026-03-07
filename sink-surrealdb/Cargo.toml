@@ -12,7 +12,7 @@ categories = ["database", "network-programming"]
 
 [dependencies]
 # Danube integration
-danube-connect-core = "0.4.1"
+danube-connect-core = { path = "/home/rdan/my_projects/danube-connect-core" }
 
 # SurrealDB client (connector-specific)
 surrealdb = { version = "2.4", features = ["protocol-ws", "protocol-http"] }

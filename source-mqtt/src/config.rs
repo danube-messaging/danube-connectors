@@ -1,6 +1,8 @@
 //! Configuration for the MQTT Source Connector
 
-use danube_connect_core::{ConnectorConfig, ConnectorResult};
+use danube_connect_core::{
+    ConfigEnvOverrides, ConfigValidate, ConnectorConfig, ConnectorConfigLoader, ConnectorResult,
+};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::time::Duration;
@@ -38,34 +40,12 @@ impl MqttSourceConfig {
     /// # ... mqtt settings
     /// ```
     pub fn load() -> ConnectorResult<Self> {
-        let config_path = env::var("CONNECTOR_CONFIG_PATH")
-            .map_err(|_| danube_connect_core::ConnectorError::config(
-                "CONNECTOR_CONFIG_PATH environment variable must be set to the path of the TOML configuration file"
-            ))?;
-
-        let mut config = Self::from_file(&config_path)?;
-
-        // Apply environment variable overrides for secrets and connection details
-        config.apply_env_overrides();
-
-        Ok(config)
+        ConnectorConfigLoader::new().load()
     }
 
     /// Load configuration from a TOML file
     pub fn from_file(path: &str) -> ConnectorResult<Self> {
-        let content = std::fs::read_to_string(path).map_err(|e| {
-            danube_connect_core::ConnectorError::config(format!(
-                "Failed to read config file {}: {}",
-                path, e
-            ))
-        })?;
-
-        toml::from_str(&content).map_err(|e| {
-            danube_connect_core::ConnectorError::config(format!(
-                "Failed to parse config file {}: {}",
-                path, e
-            ))
-        })
+        ConnectorConfigLoader::new().from_file(path)
     }
 
     /// Apply environment variable overrides for secrets and connection details
@@ -117,15 +97,63 @@ impl MqttSourceConfig {
 
     /// Validate all configuration
     pub fn validate(&self) -> ConnectorResult<()> {
-        // Validate MQTT-specific configuration
+        self.validate_config()
+    }
+}
+
+impl ConfigEnvOverrides for MqttSourceConfig {
+    fn apply_env_overrides(&mut self) -> ConnectorResult<()> {
+        if let Ok(danube_url) = env::var("DANUBE_SERVICE_URL") {
+            self.core.danube_service_url = danube_url;
+        }
+
+        if let Ok(connector_name) = env::var("CONNECTOR_NAME") {
+            self.core.connector_name = connector_name;
+        }
+
+        if let Ok(host) = env::var("MQTT_BROKER_HOST") {
+            self.mqtt.broker_host = host;
+        }
+
+        if let Ok(port) = env::var("MQTT_BROKER_PORT") {
+            if let Ok(p) = port.parse() {
+                self.mqtt.broker_port = p;
+            }
+        }
+
+        if let Ok(client_id) = env::var("MQTT_CLIENT_ID") {
+            self.mqtt.client_id = client_id;
+        }
+
+        if let Ok(username) = env::var("MQTT_USERNAME") {
+            self.mqtt.username = Some(username);
+        }
+
+        if let Ok(password) = env::var("MQTT_PASSWORD") {
+            self.mqtt.password = Some(password);
+        }
+
+        if let Ok(use_tls) = env::var("MQTT_USE_TLS") {
+            if let Ok(b) = use_tls.parse() {
+                self.mqtt.use_tls = b;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl ConfigValidate for MqttSourceConfig {
+    fn validate_config(&self) -> ConnectorResult<()> {
         self.mqtt.validate()?;
-        
-        // Schema validation is handled by danube-connect-core
-        // We just validate that topics match between mappings and schemas
+
         for schema in &self.core.schemas {
-            let topic_exists = self.mqtt.topic_mappings.iter()
-                .any(|m| m.danube_topic == schema.topic);
-            
+            let topic_exists = self
+                .mqtt
+                .topic_mappings
+                .iter()
+                .any(|mapping| mapping.danube_topic == schema.topic);
+
             if !topic_exists {
                 tracing::warn!(
                     "Schema configured for topic '{}' but no topic mapping exists for it",
@@ -133,7 +161,7 @@ impl MqttSourceConfig {
                 );
             }
         }
-        
+
         Ok(())
     }
 }

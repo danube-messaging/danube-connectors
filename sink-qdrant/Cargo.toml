@@ -9,7 +9,7 @@ repository = "https://github.com/danube-messaging/danube-connect"
 
 [dependencies]
 # Danube integration
-danube-connect-core = "0.4.1"
+danube-connect-core = { path = "/home/rdan/my_projects/danube-connect-core" }
 
 # Qdrant client (connector-specific)
 qdrant-client = "1.14.1"

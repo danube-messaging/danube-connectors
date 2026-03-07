@@ -6,10 +6,12 @@
 //! - Batch processing and performance tuning
 //! - Environment variable overrides
 
-use danube_connect_core::{ConnectorConfig, ConnectorError, ConnectorResult, SubscriptionType};
+use danube_connect_core::{
+    ConfigEnvOverrides, ConfigValidate, ConnectorConfig, ConnectorConfigLoader, ConnectorError,
+    ConnectorResult, SubscriptionType,
+};
 use serde::{Deserialize, Serialize};
 use std::env;
-use std::fs;
 
 /// Storage mode for SurrealDB records
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -149,27 +151,12 @@ impl SurrealDBSinkConfig {
     /// The config file path must be specified via CONNECTOR_CONFIG_PATH environment variable.
     /// Environment variables can override secrets (username, password) and URLs.
     pub fn load() -> ConnectorResult<Self> {
-        let config_path = env::var("CONNECTOR_CONFIG_PATH")
-            .map_err(|_| ConnectorError::config(
-                "CONNECTOR_CONFIG_PATH environment variable must be set to the path of the TOML configuration file"
-            ))?;
-
-        Self::from_file(&config_path)
+        ConnectorConfigLoader::new().load()
     }
 
     /// Load configuration from a TOML file
     pub fn from_file(path: &str) -> ConnectorResult<Self> {
-        let contents = fs::read_to_string(path).map_err(|e| {
-            ConnectorError::config(format!("Failed to read config file '{}': {}", path, e))
-        })?;
-
-        let mut config: Self = toml::from_str(&contents)
-            .map_err(|e| ConnectorError::config(format!("Failed to parse TOML config: {}", e)))?;
-
-        // Apply environment variable overrides
-        config.apply_env_overrides()?;
-
-        Ok(config)
+        ConnectorConfigLoader::new().from_file(path)
     }
 
     /// Apply environment variable overrides for secrets and connection details
@@ -178,8 +165,14 @@ impl SurrealDBSinkConfig {
     /// - Credentials (username, password)
     /// - Connection URLs (for different environments)
     /// - Connector name (for different deployments)
+    /// Validate configuration
+    pub fn validate(&self) -> ConnectorResult<()> {
+        self.validate_config()
+    }
+}
+
+impl ConfigEnvOverrides for SurrealDBSinkConfig {
     fn apply_env_overrides(&mut self) -> ConnectorResult<()> {
-        // Override core Danube settings (mandatory fields from danube-connect-core)
         if let Ok(danube_url) = env::var("DANUBE_SERVICE_URL") {
             self.core.danube_service_url = danube_url;
         }
@@ -188,12 +181,10 @@ impl SurrealDBSinkConfig {
             self.core.connector_name = connector_name;
         }
 
-        // Override SurrealDB connection URL (for different environments: dev/staging/prod)
         if let Ok(url) = env::var("SURREALDB_URL") {
             self.surrealdb.url = url;
         }
 
-        // Override credentials (secrets should not be in config files)
         if let Ok(username) = env::var("SURREALDB_USERNAME") {
             self.surrealdb.username = Some(username);
         }
@@ -203,9 +194,10 @@ impl SurrealDBSinkConfig {
 
         Ok(())
     }
+}
 
-    /// Validate configuration
-    pub fn validate(&self) -> ConnectorResult<()> {
+impl ConfigValidate for SurrealDBSinkConfig {
+    fn validate_config(&self) -> ConnectorResult<()> {
         // Validate SurrealDB URL
         if self.surrealdb.url.is_empty() {
             return Err(ConnectorError::config("SURREALDB_URL cannot be empty"));

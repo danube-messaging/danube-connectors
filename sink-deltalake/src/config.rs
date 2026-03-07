@@ -7,10 +7,12 @@
 //! - Batch processing and performance tuning
 //! - Environment variable overrides
 
-use danube_connect_core::{ConnectorConfig, ConnectorError, ConnectorResult};
+use danube_connect_core::{
+    ConfigEnvOverrides, ConfigValidate, ConnectorConfig, ConnectorConfigLoader, ConnectorError,
+    ConnectorResult,
+};
 use serde::{Deserialize, Serialize};
 use std::env;
-use std::fs;
 
 /// Complete configuration for the Delta Lake Sink Connector
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -207,18 +209,8 @@ fn default_true() -> bool {
 impl DeltaLakeSinkConfig {
     /// Load configuration from TOML file
     pub fn from_file(path: &str) -> ConnectorResult<Self> {
-        let contents = fs::read_to_string(path).map_err(|e| {
-            ConnectorError::config(format!("Failed to read config file '{}': {}", path, e))
-        })?;
-
-        let mut config: Self = toml::from_str(&contents).map_err(|e| {
-            ConnectorError::config(format!("Failed to parse config file '{}': {}", path, e))
-        })?;
-
-        // Initialize pre-split path parts for performance optimization
+        let mut config: Self = ConnectorConfigLoader::new().from_file(path)?;
         config.init_path_parts();
-
-        config.validate()?;
         Ok(config)
     }
 
@@ -233,20 +225,13 @@ impl DeltaLakeSinkConfig {
 
     /// Load configuration from environment variable CONNECTOR_CONFIG_PATH
     pub fn load() -> ConnectorResult<Self> {
-        let config_path = env::var("CONNECTOR_CONFIG_PATH").map_err(|_| {
-            ConnectorError::config(
-                "CONNECTOR_CONFIG_PATH environment variable not set. \
-                 Please set it to the path of your connector.toml file.",
-            )
-        })?;
-
-        let mut config = Self::from_file(&config_path)?;
-        config.apply_env_overrides();
+        let mut config: Self = ConnectorConfigLoader::new().load()?;
+        config.init_path_parts();
         Ok(config)
     }
 
     /// Apply environment variable overrides
-    fn apply_env_overrides(&mut self) {
+    fn apply_delta_env_overrides(&mut self) {
         // Core overrides (mandatory)
         if let Ok(url) = env::var("DANUBE_SERVICE_URL") {
             tracing::info!("Overriding danube_service_url from environment");
@@ -278,6 +263,19 @@ impl DeltaLakeSinkConfig {
 
     /// Validate configuration
     fn validate(&self) -> ConnectorResult<()> {
+        self.validate_config()
+    }
+}
+
+impl ConfigEnvOverrides for DeltaLakeSinkConfig {
+    fn apply_env_overrides(&mut self) -> ConnectorResult<()> {
+        self.apply_delta_env_overrides();
+        Ok(())
+    }
+}
+
+impl ConfigValidate for DeltaLakeSinkConfig {
+    fn validate_config(&self) -> ConnectorResult<()> {
         // Validate topic mappings
         if self.deltalake.topic_mappings.is_empty() {
             return Err(ConnectorError::config(

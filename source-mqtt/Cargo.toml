@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Danube integration
-danube-connect-core = "0.4.0"
+danube-connect-core = { path = "/home/rdan/my_projects/danube-connect-core" }
 
 # MQTT client (connector-specific)
 rumqttc = "0.25.1"
