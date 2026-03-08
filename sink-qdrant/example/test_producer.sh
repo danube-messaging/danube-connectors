@@ -93,6 +93,20 @@ else
     echo "✅ Danube broker is reachable"
 fi
 
+PRODUCE_SERVICE_ADDR="${DANUBE_URL}"
+PRODUCE_CMD=("${DANUBE_CLI}")
+
+if command -v docker &> /dev/null && docker inspect danube-broker &> /dev/null; then
+    if [ "${DANUBE_HOST}" = "localhost" ] || [ "${DANUBE_HOST}" = "127.0.0.1" ]; then
+        DOCKER_NETWORK=$(docker inspect danube-broker --format '{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}' | head -n 1)
+        if [ -n "${DOCKER_NETWORK}" ]; then
+            PRODUCE_SERVICE_ADDR="http://danube-broker:6650"
+            PRODUCE_CMD=(docker run --rm --network "${DOCKER_NETWORK}" --entrypoint danube-cli ghcr.io/danube-messaging/danube-cli:latest)
+            echo "🐳 Using Dockerized danube-cli on network ${DOCKER_NETWORK}"
+        fi
+    fi
+fi
+
 echo "✅ Ready to send messages"
 echo ""
 echo "Press Ctrl+C to stop"
@@ -111,19 +125,19 @@ while IFS= read -r message; do
     text_short="${text:0:50}"
     
     # Send message using danube-cli with schema validation (v0.2.0)
-    if ${DANUBE_CLI} produce \
-        --service-addr "${DANUBE_URL}" \
+    if output=$("${PRODUCE_CMD[@]}" produce \
+        --service-addr "${PRODUCE_SERVICE_ADDR}" \
         --topic "${TOPIC}" \
         --schema-subject "embeddings-v1" \
         --message "$message" \
         --interval ${INTERVAL} \
-        --reliable \
-        > /dev/null 2>&1; then
+        --reliable 2>&1); then
         success=$((success + 1))
         echo "✅ [${count}/${total}] Sent: ${text_short}..."
     else
         failed=$((failed + 1))
         echo "❌ [${count}/${total}] Failed: ${text_short}..."
+        echo "${output}"
     fi
     
     # Small delay between messages
