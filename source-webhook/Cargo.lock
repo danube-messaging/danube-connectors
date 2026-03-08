@@ -464,33 +464,12 @@ dependencies = [
 
 [[package]]
 name = "danube-client"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "518f7dd50bf5033d6254e460bd3eefbc643f1291695b626d6c9d4d730039c935"
-dependencies = [
- "base64 0.22.1",
- "danube-core 0.6.1",
- "futures",
- "prost",
- "rand 0.9.2",
- "serde",
- "serde_json",
- "thiserror 2.0.17",
- "tokio",
- "tokio-stream",
- "tonic",
- "tonic-types",
- "tracing",
-]
-
-[[package]]
-name = "danube-client"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "91977c673d8bda7d6b976cb02942c0f7f1ec36e1a44ed51a0c25188d4efb5dc1"
 dependencies = [
  "base64 0.22.1",
- "danube-core 0.8.0",
+ "danube-core",
  "futures",
  "prost",
  "rand 0.9.2",
@@ -506,12 +485,14 @@ dependencies = [
 
 [[package]]
 name = "danube-connect-core"
-version = "0.4.1"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f406efdc6a6db340e3591f41767f5d5d8c971f8406b2cc1de9cf1116c2964632"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
- "danube-client 0.8.0",
- "danube-core 0.8.0",
+ "danube-client",
+ "danube-core",
  "metrics",
  "metrics-exporter-prometheus",
  "rand 0.9.2",
@@ -522,23 +503,6 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "danube-core"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d5efb79f6ea09254d843f9f025a19b52e4f13c9eefbddb31bbd0d5320582e8b"
-dependencies = [
- "async-trait",
- "futures-core",
- "prost",
- "serde",
- "thiserror 2.0.17",
- "tokio",
- "tonic",
- "tonic-prost",
- "tonic-prost-build",
 ]
 
 [[package]]
@@ -571,7 +535,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "chrono",
- "danube-client 0.6.1",
+ "danube-client",
  "danube-connect-core",
  "governor",
  "hmac",

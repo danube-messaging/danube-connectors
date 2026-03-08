@@ -222,7 +222,9 @@ dependencies = [
 
 [[package]]
 name = "danube-connect-core"
-version = "0.4.1"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f406efdc6a6db340e3591f41767f5d5d8c971f8406b2cc1de9cf1116c2964632"
 dependencies = [
  "async-trait",
  "base64",

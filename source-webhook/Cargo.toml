@@ -13,8 +13,8 @@ path = "src/main.rs"
 
 [dependencies]
 # Danube integration
-danube-connect-core = { path = "/home/rdan/my_projects/danube-connect-core" }
-danube-client = "0.6.1"
+danube-connect-core = "0.5.0"
+danube-client = "0.8.0"
 
 # Async Runtime
 async-trait = "0.1.89"
