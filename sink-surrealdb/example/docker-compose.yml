@@ -51,20 +51,18 @@ services:
       - ./events-schema.json:/schemas/events-schema.json:ro
     networks:
       - surrealdb-network
-    command:
-      - sh
-      - -c
-      - |
-        echo 'Waiting for Danube broker to be ready...'
-        sleep 5
+    entrypoint: ["sh", "-c"]
+    command: |
+      echo 'Waiting for Danube broker to be ready...'
+      sleep 5
 
-        echo 'Registering schema: events-v1...'
-        danube-admin schemas register events-v1 --schema-type json_schema --file /schemas/events-schema.json || echo 'Schema may already exist'
+      echo 'Registering schema: events-v1...'
+      danube-admin schemas register events-v1 --schema-type json_schema --file /schemas/events-schema.json || echo 'Schema may already exist'
 
-        echo 'Creating topic /default/events with schema validation...'
-        danube-admin topics create /default/events --dispatch-strategy reliable --schema-subject events-v1 || echo 'Topic may already exist'
+      echo 'Creating topic /default/events with schema validation...'
+      danube-admin topics create /default/events --dispatch-strategy reliable --schema-subject events-v1 || echo 'Topic may already exist'
 
-        echo 'Schema and topic initialization complete'
+      echo 'Schema and topic initialization complete'
     restart: "no"
 
   # SurrealDB Database
