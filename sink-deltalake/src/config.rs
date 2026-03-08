@@ -207,13 +207,6 @@ fn default_true() -> bool {
 }
 
 impl DeltaLakeSinkConfig {
-    /// Load configuration from TOML file
-    pub fn from_file(path: &str) -> ConnectorResult<Self> {
-        let mut config: Self = ConnectorConfigLoader::new().from_file(path)?;
-        config.init_path_parts();
-        Ok(config)
-    }
-
     /// Initialize path_parts for all field mappings
     fn init_path_parts(&mut self) {
         for mapping in &mut self.deltalake.topic_mappings {
@@ -259,11 +252,6 @@ impl DeltaLakeSinkConfig {
         if let Ok(project) = env::var("GCP_PROJECT_ID") {
             self.deltalake.gcp_project_id = Some(project);
         }
-    }
-
-    /// Validate configuration
-    fn validate(&self) -> ConnectorResult<()> {
-        self.validate_config()
     }
 }
 

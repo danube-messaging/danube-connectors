@@ -346,7 +346,6 @@ mod tests {
     use super::*;
     use crate::config::Distance;
     use danube_connect_core::SubscriptionType;
-    use std::collections::HashMap;
 
     #[test]
     fn test_connector_creation() {

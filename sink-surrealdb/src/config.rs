@@ -154,11 +154,6 @@ impl SurrealDBSinkConfig {
         ConnectorConfigLoader::new().load()
     }
 
-    /// Load configuration from a TOML file
-    pub fn from_file(path: &str) -> ConnectorResult<Self> {
-        ConnectorConfigLoader::new().from_file(path)
-    }
-
     /// Apply environment variable overrides for secrets and connection details
     ///
     /// Only overrides sensitive data that shouldn't be in config files:

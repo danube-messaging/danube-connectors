@@ -27,38 +27,6 @@ impl QdrantSinkConfig {
         ConnectorConfigLoader::new().load()
     }
 
-    /// Load configuration from a TOML file
-    pub fn from_file(path: &str) -> ConnectorResult<Self> {
-        ConnectorConfigLoader::new().from_file(path)
-    }
-
-    /// Apply environment variable overrides for secrets and connection details
-    ///
-    /// Only overrides sensitive data that shouldn't be in config files:
-    /// - API key (secret)
-    /// - Connection URLs (for different environments)
-    /// - Connector name (for different deployments)
-    fn apply_env_overrides(&mut self) {
-        // Override core Danube settings (mandatory fields from danube-connect-core)
-        if let Ok(danube_url) = env::var("DANUBE_SERVICE_URL") {
-            self.core.danube_service_url = danube_url;
-        }
-
-        if let Ok(connector_name) = env::var("CONNECTOR_NAME") {
-            self.core.connector_name = connector_name;
-        }
-
-        // Override Qdrant URL (for different environments: dev/staging/prod)
-        if let Ok(url) = env::var("QDRANT_URL") {
-            self.qdrant.url = url;
-        }
-
-        // Override API key (secret should not be in config files)
-        if let Ok(api_key) = env::var("QDRANT_API_KEY") {
-            self.qdrant.api_key = Some(api_key);
-        }
-    }
-
     /// Validate all configuration
     pub fn validate(&self) -> ConnectorResult<()> {
         self.validate_config()

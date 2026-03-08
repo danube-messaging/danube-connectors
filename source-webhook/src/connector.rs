@@ -19,8 +19,6 @@ pub struct WebhookConnector {
     config: WebhookSourceConfig,
     /// Schema mappings for topics
     schemas: Vec<SchemaMapping>,
-    /// Channel sender for webhook handler (shared with HTTP server)
-    message_tx: Option<SourceSender>,
     /// Endpoint configurations mapped by path
     endpoints: Arc<RwLock<HashMap<String, EndpointConfig>>>,
     /// HTTP server handle
@@ -39,29 +37,9 @@ impl WebhookConnector {
         Self {
             config,
             schemas,
-            message_tx: None,
             endpoints: Arc::new(RwLock::new(endpoints)),
             server_handle: None,
         }
-    }
-
-    /// Get the message sender for the HTTP server
-    #[allow(dead_code)]
-    pub fn message_sender(&self) -> Option<SourceSender> {
-        self.message_tx.clone()
-    }
-
-    /// Get endpoint configuration by path
-    #[allow(dead_code)]
-    pub async fn get_endpoint(&self, path: &str) -> Option<EndpointConfig> {
-        let endpoints = self.endpoints.read().await;
-        endpoints.get(path).cloned()
-    }
-
-    /// Get connector configuration
-    #[allow(dead_code)]
-    pub fn config(&self) -> &WebhookSourceConfig {
-        &self.config
     }
 
     /// Create a SourceRecord from webhook data
@@ -153,8 +131,6 @@ impl SourceConnector for WebhookConnector {
             ));
         }
 
-        self.message_tx = Some(sender.clone());
-
         // Start HTTP server in background task
         // We need to create a shared state for the server
         let server_config = self.config.clone();
@@ -239,9 +215,6 @@ impl SourceConnector for WebhookConnector {
 
     async fn shutdown(&mut self) -> ConnectorResult<()> {
         info!("Shutting down Webhook Source Connector");
-
-        // Close the message channel
-        self.message_tx = None;
 
         // Stop HTTP server
         if let Some(handle) = self.server_handle.take() {

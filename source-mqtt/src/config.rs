@@ -43,58 +43,6 @@ impl MqttSourceConfig {
         ConnectorConfigLoader::new().load()
     }
 
-    /// Load configuration from a TOML file
-    pub fn from_file(path: &str) -> ConnectorResult<Self> {
-        ConnectorConfigLoader::new().from_file(path)
-    }
-
-    /// Apply environment variable overrides for secrets and connection details
-    ///
-    /// Only overrides sensitive data that shouldn't be in config files:
-    /// - Credentials (username, password)
-    /// - Connection URLs (for different environments)
-    /// - Connector name (for different deployments)
-    fn apply_env_overrides(&mut self) {
-        // Override core Danube settings (mandatory fields from danube-connect-core)
-        if let Ok(danube_url) = env::var("DANUBE_SERVICE_URL") {
-            self.core.danube_service_url = danube_url;
-        }
-
-        if let Ok(connector_name) = env::var("CONNECTOR_NAME") {
-            self.core.connector_name = connector_name;
-        }
-
-        // Override MQTT connection settings
-        if let Ok(host) = env::var("MQTT_BROKER_HOST") {
-            self.mqtt.broker_host = host;
-        }
-
-        if let Ok(port) = env::var("MQTT_BROKER_PORT") {
-            if let Ok(p) = port.parse() {
-                self.mqtt.broker_port = p;
-            }
-        }
-
-        if let Ok(client_id) = env::var("MQTT_CLIENT_ID") {
-            self.mqtt.client_id = client_id;
-        }
-
-        // Override credentials (secrets should not be in config files)
-        if let Ok(username) = env::var("MQTT_USERNAME") {
-            self.mqtt.username = Some(username);
-        }
-
-        if let Ok(password) = env::var("MQTT_PASSWORD") {
-            self.mqtt.password = Some(password);
-        }
-
-        if let Ok(use_tls) = env::var("MQTT_USE_TLS") {
-            if let Ok(b) = use_tls.parse() {
-                self.mqtt.use_tls = b;
-            }
-        }
-    }
-
     /// Validate all configuration
     pub fn validate(&self) -> ConnectorResult<()> {
         self.validate_config()

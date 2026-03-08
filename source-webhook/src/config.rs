@@ -3,12 +3,12 @@
 //! This module handles loading and validating connector configuration from TOML files
 //! with environment variable overrides for secrets.
 
-use anyhow::{Context, Result};
-use danube_connect_core::ConnectorConfig;
+use danube_connect_core::{
+    ConfigEnvOverrides, ConfigValidate, ConnectorConfig, ConnectorConfigLoader, ConnectorError,
+    ConnectorResult,
+};
 use serde::{Deserialize, Serialize};
 use std::env;
-use std::fs;
-use std::path::Path;
 
 /// Root configuration for the webhook source connector
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -26,7 +26,6 @@ pub struct WebhookSourceConfig {
     /// Endpoint definitions (multiple endpoints for different event types)
     pub endpoints: Vec<EndpointConfig>,
 }
-
 
 /// HTTP server configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -127,123 +126,56 @@ pub struct EndpointConfig {
 }
 
 impl WebhookSourceConfig {
-    /// Load configuration from a TOML file
-    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let content = fs::read_to_string(path.as_ref())
-            .with_context(|| format!("Failed to read config file: {:?}", path.as_ref()))?;
-
-        let mut config: WebhookSourceConfig = toml::from_str(&content)
-            .with_context(|| "Failed to parse TOML configuration")?;
-
-        // Apply environment variable overrides
-        config.apply_env_overrides()?;
-
-        // Validate configuration
-        config.validate()?;
-
-        Ok(config)
-    }
-
-    /// Apply environment variable overrides
-    fn apply_env_overrides(&mut self) -> Result<()> {
-        // Override Danube service URL
-        if let Ok(url) = env::var("DANUBE_SERVICE_URL") {
-            tracing::info!("Overriding danube_service_url from environment");
-            self.core.danube_service_url = url;
-        }
-
-        // Override connector name
-        if let Ok(name) = env::var("CONNECTOR_NAME") {
-            tracing::info!("Overriding connector_name from environment");
-            self.core.connector_name = name;
-        }
-
-        // Override server host
-        if let Ok(host) = env::var("SERVER_HOST") {
-            tracing::info!("Overriding server host from environment");
-            self.server.host = host;
-        }
-
-        // Override server port
-        if let Ok(port) = env::var("SERVER_PORT") {
-            let port: u16 = port.parse()
-                .with_context(|| "Invalid SERVER_PORT value")?;
-            tracing::info!("Overriding server port from environment: {}", port);
-            self.server.port = port;
-        }
-
-        Ok(())
+    /// Load configuration from environment variable CONNECTOR_CONFIG_PATH
+    pub fn load() -> ConnectorResult<Self> {
+        ConnectorConfigLoader::new().load()
     }
 
     /// Validate configuration
-    pub fn validate(&self) -> Result<()> {
-        // Validate Danube URL
-        if self.core.danube_service_url.is_empty() {
-            anyhow::bail!("danube_service_url cannot be empty");
-        }
-
-        // Validate connector name
-        if self.core.connector_name.is_empty() {
-            anyhow::bail!("connector_name cannot be empty");
-        }
-
-        // Validate endpoints
-        if self.endpoints.is_empty() {
-            anyhow::bail!("At least one endpoint must be configured");
-        }
-
-        // Validate endpoint paths are unique
-        let mut paths = std::collections::HashSet::new();
-        for endpoint in &self.endpoints {
-            if !paths.insert(&endpoint.path) {
-                anyhow::bail!("Duplicate endpoint path: {}", endpoint.path);
-            }
-
-            // Validate path starts with /
-            if !endpoint.path.starts_with('/') {
-                anyhow::bail!("Endpoint path must start with '/': {}", endpoint.path);
-            }
-
-            // Validate topic is not empty
-            if endpoint.danube_topic.is_empty() {
-                anyhow::bail!("danube_topic cannot be empty for endpoint: {}", endpoint.path);
-            }
-        }
-
-        // Validate authentication configuration
-        self.validate_auth()?;
-
-        Ok(())
+    pub fn validate(&self) -> ConnectorResult<()> {
+        self.validate_config()
     }
 
     /// Validate authentication configuration
-    fn validate_auth(&self) -> Result<()> {
+    fn validate_auth(&self) -> ConnectorResult<()> {
         match self.auth.auth_type {
             AuthType::None => {
                 // No validation needed
             }
             AuthType::ApiKey => {
                 if self.auth.secret_env.is_none() {
-                    anyhow::bail!("secret_env is required for API key authentication");
+                    return Err(ConnectorError::config(
+                        "secret_env is required for API key authentication",
+                    ));
                 }
                 if self.auth.header.is_none() {
-                    anyhow::bail!("header is required for API key authentication");
+                    return Err(ConnectorError::config(
+                        "header is required for API key authentication",
+                    ));
                 }
             }
             AuthType::Hmac => {
                 if self.auth.secret_env.is_none() {
-                    anyhow::bail!("secret_env is required for HMAC authentication");
+                    return Err(ConnectorError::config(
+                        "secret_env is required for HMAC authentication",
+                    ));
                 }
                 if self.auth.header.is_none() {
-                    anyhow::bail!("header is required for HMAC authentication");
+                    return Err(ConnectorError::config(
+                        "header is required for HMAC authentication",
+                    ));
                 }
                 if self.auth.algorithm.is_none() {
-                    anyhow::bail!("algorithm is required for HMAC authentication");
+                    return Err(ConnectorError::config(
+                        "algorithm is required for HMAC authentication",
+                    ));
                 }
             }
             AuthType::Jwt => {
                 if self.auth.secret_env.is_none() && self.auth.public_key_path.is_none() {
-                    anyhow::bail!("Either secret_env or public_key_path is required for JWT authentication");
+                    return Err(ConnectorError::config(
+                        "Either secret_env or public_key_path is required for JWT authentication",
+                    ));
                 }
             }
         }
@@ -251,26 +183,82 @@ impl WebhookSourceConfig {
         Ok(())
     }
 
-    /// Get authentication secret from environment variable
-    #[allow(dead_code)]
-    pub fn get_auth_secret(&self) -> Result<Option<String>> {
-        if let Some(env_var) = &self.auth.secret_env {
-            let secret = env::var(env_var)
-                .with_context(|| format!("Authentication secret not found in environment variable: {}", env_var))?;
-            
-            if secret.is_empty() {
-                anyhow::bail!("Authentication secret is empty in environment variable: {}", env_var);
-            }
-            
-            Ok(Some(secret))
-        } else {
-            Ok(None)
-        }
-    }
-
     /// Get server bind address
     pub fn bind_address(&self) -> String {
         format!("{}:{}", self.server.host, self.server.port)
+    }
+}
+
+impl ConfigEnvOverrides for WebhookSourceConfig {
+    fn apply_env_overrides(&mut self) -> ConnectorResult<()> {
+        if let Ok(url) = env::var("DANUBE_SERVICE_URL") {
+            tracing::info!("Overriding danube_service_url from environment");
+            self.core.danube_service_url = url;
+        }
+
+        if let Ok(name) = env::var("CONNECTOR_NAME") {
+            tracing::info!("Overriding connector_name from environment");
+            self.core.connector_name = name;
+        }
+
+        if let Ok(host) = env::var("SERVER_HOST") {
+            tracing::info!("Overriding server host from environment");
+            self.server.host = host;
+        }
+
+        if let Ok(port) = env::var("SERVER_PORT") {
+            let port = port
+                .parse::<u16>()
+                .map_err(|e| ConnectorError::config(format!("Invalid SERVER_PORT value: {}", e)))?;
+            tracing::info!("Overriding server port from environment: {}", port);
+            self.server.port = port;
+        }
+
+        Ok(())
+    }
+}
+
+impl ConfigValidate for WebhookSourceConfig {
+    fn validate_config(&self) -> ConnectorResult<()> {
+        if self.core.danube_service_url.is_empty() {
+            return Err(ConnectorError::config("danube_service_url cannot be empty"));
+        }
+
+        if self.core.connector_name.is_empty() {
+            return Err(ConnectorError::config("connector_name cannot be empty"));
+        }
+
+        if self.endpoints.is_empty() {
+            return Err(ConnectorError::config(
+                "At least one endpoint must be configured",
+            ));
+        }
+
+        let mut paths = std::collections::HashSet::new();
+        for endpoint in &self.endpoints {
+            if !paths.insert(&endpoint.path) {
+                return Err(ConnectorError::config(format!(
+                    "Duplicate endpoint path: {}",
+                    endpoint.path
+                )));
+            }
+
+            if !endpoint.path.starts_with('/') {
+                return Err(ConnectorError::config(format!(
+                    "Endpoint path must start with '/': {}",
+                    endpoint.path
+                )));
+            }
+
+            if endpoint.danube_topic.is_empty() {
+                return Err(ConnectorError::config(format!(
+                    "danube_topic cannot be empty for endpoint: {}",
+                    endpoint.path
+                )));
+            }
+        }
+
+        self.validate_auth()
     }
 }
 
