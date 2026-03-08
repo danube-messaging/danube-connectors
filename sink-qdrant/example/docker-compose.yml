@@ -39,13 +39,13 @@ services:
 
   # Topic Initialization - Creates schema and topic with validation
   topic-init:
-    image: ghcr.io/danube-messaging/danube-cli:latest
+    image: ghcr.io/danube-messaging/danube-admin:latest
     container_name: qdrant-topic-init
     depends_on:
       danube-broker:
         condition: service_healthy
     environment:
-      - DANUBE_ADMIN_ENDPOINT=http://danube-broker:50051
+      - DANUBE_BROKER_ENDPOINT=http://danube-broker:50051
     volumes:
       # Mount schema definition file
       - ./embeddings-schema.json:/schemas/embeddings-schema.json:ro
@@ -59,10 +59,10 @@ services:
         sleep 5
 
         echo 'Registering schema: embeddings-v1...'
-        danube-admin-cli schemas register embeddings-v1 --schema-type json_schema --file /schemas/embeddings-schema.json || echo 'Schema may already exist'
+        danube-admin schemas register embeddings-v1 --schema-type json_schema --file /schemas/embeddings-schema.json || echo 'Schema may already exist'
 
         echo 'Creating topic /default/vectors with schema validation...'
-        danube-admin-cli topics create /default/vectors --dispatch-strategy reliable --schema-subject embeddings-v1 || echo 'Topic may already exist'
+        danube-admin topics create /default/vectors --dispatch-strategy reliable --schema-subject embeddings-v1 || echo 'Topic may already exist'
 
         echo 'Schema and topic initialization complete'
     restart: "no"

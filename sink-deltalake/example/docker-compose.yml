@@ -39,14 +39,13 @@ services:
 
   # Topic Initialization - Creates schema and topic with validation
   topic-init:
-    image: ghcr.io/danube-messaging/danube-cli:latest
+    image: ghcr.io/danube-messaging/danube-admin:latest
     container_name: deltalake-topic-init
     depends_on:
       danube-broker:
         condition: service_healthy
     environment:
-      - DANUBE_SERVICE_URL=http://danube-broker:6650
-      - DANUBE_ADMIN_ENDPOINT=http://danube-broker:50051
+      - DANUBE_BROKER_ENDPOINT=http://danube-broker:50051
     volumes:
       # Mount schema definition file
       - ./events-schema.json:/schemas/events-schema.json:ro
@@ -60,10 +59,10 @@ services:
         sleep 5
         
         echo 'Registering schema: events-schema-v1...'
-        danube-admin-cli schemas register events-schema-v1 --schema-type json_schema --file /schemas/events-schema.json || echo 'Schema may already exist'
+        danube-admin schemas register events-schema-v1 --schema-type json_schema --file /schemas/events-schema.json || echo 'Schema may already exist'
         
         echo 'Creating topic /default/events with schema validation...'
-        danube-admin-cli topics create /default/events --dispatch-strategy reliable --schema-subject events-schema-v1 || echo 'Topic may already exist'
+        danube-admin topics create /default/events --dispatch-strategy reliable --schema-subject events-schema-v1 || echo 'Topic may already exist'
         
         echo 'Schema and topic initialization complete'
     restart: "no"
