@@ -20,10 +20,10 @@ This example shows how to:
 └────────┬────────┘
          │ Events (JSON + Schema)
          ▼
-┌─────────────────┐     ┌───────────────┐     ┌──────────┐
-│ Danube Broker   │────▶│ Schema        │────▶│   ETCD   │
-│  Topic: events  │     │ Registry      │     │ Metadata │
-│  Schema: v1     │     │ (events-v1)   │     └──────────┘
+┌─────────────────┐     ┌───────────────┐
+│ Danube Broker   │────▶│ Schema        │
+│  Topic: events  │     │ Registry      │
+│  Embedded Raft  │     │ (events-v1)   │
 └────────┬────────┘     └───────────────┘
          │ Validated Stream
          ▼
@@ -45,7 +45,7 @@ This example shows how to:
 ### 1. Start the Stack
 
 ```bash
-# Start all services (ETCD, Danube, Topic Init, SurrealDB, Connector)
+# Start all services (Danube, Topic Init, SurrealDB, Connector)
 docker-compose up -d
 
 # Check logs
@@ -59,16 +59,18 @@ docker-compose ps
 ```
 
 **Startup Sequence:**
-1. **ETCD** starts and becomes healthy
-2. **Danube Broker** starts (depends on ETCD)
-3. **Topic Init** (depends on Danube):
+1. **Danube Broker** starts as a single-node broker using embedded Raft metadata
+2. **Topic Init** (depends on Danube):
    - Registers schema `events-v1` in Schema Registry
    - Creates `/default/events` topic with schema validation
-4. **SurrealDB** starts independently and becomes healthy
-5. **SurrealDB Sink** starts (depends on topic creation + SurrealDB health)
+3. **SurrealDB** starts independently and becomes healthy
+4. **SurrealDB Sink** starts (depends on topic creation + SurrealDB health)
+
+**Shared Danube broker config:**
+- The example mounts `../../example_shared/danube_broker_no_auth.yml`
+- Update that single file when Danube broker config changes for all connector examples
 
 Services:
-- **ETCD**: `http://localhost:2379` (Danube metadata storage)
 - **Danube Broker**: `http://localhost:6650`
 - **Danube Admin API**: `http://localhost:50051`
 - **Danube Metrics**: `http://localhost:9040/metrics`
@@ -520,9 +522,8 @@ With `include_danube_metadata = true`, records include Danube metadata:
   },
   "_danube_metadata": {
     "danube_topic": "/default/events",
-    "danube_offset": 42,
     "danube_timestamp": "2026-01-08T19:45:23.456789Z",
-    "danube_message_id": "..."
+    "danube_producer": "example-producer"
   }
 }
 ```

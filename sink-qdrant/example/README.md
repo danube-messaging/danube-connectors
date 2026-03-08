@@ -19,10 +19,11 @@ This example shows how to:
 └────────┬────────┘
          │ Embeddings
          ▼
-┌─────────────────┐     ┌──────────┐
-│ Danube Broker   │────▶│   ETCD   │
-│  Topic: vectors │     │ Metadata │
-└────────┬────────┘     └──────────┘
+┌─────────────────┐
+│ Danube Broker   │
+│  Topic: vectors │
+│  Embedded Raft  │
+└────────┬────────┘
          │ Stream
          ▼
 ┌─────────────────┐
@@ -42,7 +43,7 @@ This example shows how to:
 ### 1. Start the Stack
 
 ```bash
-# Start all services (ETCD, Danube, Topic Init, Qdrant, Connector)
+# Start all services (Danube, Topic Init, Qdrant, Connector)
 docker-compose up -d
 
 # Check logs
@@ -53,14 +54,16 @@ docker-compose ps
 ```
 
 **Startup Sequence:**
-1. **ETCD** starts and becomes healthy
-2. **Danube Broker** starts (depends on ETCD)
-3. **Topic Init** registers schema and creates `/default/vectors` topic with validation (depends on Danube)
-4. **Qdrant** starts independently and becomes healthy
-5. **Qdrant Sink** starts (depends on topic creation + Qdrant health)
+1. **Danube Broker** starts as a single-node broker using embedded Raft metadata
+2. **Topic Init** registers schema and creates `/default/vectors` topic with validation (depends on Danube)
+3. **Qdrant** starts independently and becomes healthy
+4. **Qdrant Sink** starts (depends on topic creation + Qdrant health)
+
+**Shared Danube broker config:**
+- The example mounts `../../example_shared/danube_broker_no_auth.yml`
+- Update that single file when Danube broker config changes for all connector examples
 
 Services:
-- **ETCD**: `http://localhost:2379` (Danube metadata storage)
 - **Danube Broker**: `http://localhost:6650`
 - **Danube Admin API**: `http://localhost:50051`
 - **Danube Metrics**: `http://localhost:9040/metrics`
@@ -107,7 +110,7 @@ chmod +x danube-cli-macos
 
 Or use the Docker image:
 ```bash
-docker pull ghcr.io/danube-messaging/danube-cli:v0.6.0
+docker pull ghcr.io/danube-messaging/danube-cli:latest
 ```
 
 ### 3. Generate and Send Test Data
@@ -226,9 +229,9 @@ Update `docker-compose.yml`:
 ```yaml
 qdrant-sink:
   environment:
-    - CONFIG_FILE=/app/config.toml
+    - CONNECTOR_CONFIG_PATH=/etc/connector.toml
   volumes:
-    - ./connector.toml:/app/config.toml:ro  # or connector-multi-topic.toml
+    - ./connector.toml:/etc/connector.toml:ro  # or connector-multi-topic.toml
 ```
 
 ## Monitoring
@@ -283,9 +286,9 @@ The example uses 384-dimensional vectors (sentence-transformers). To test other 
 # Stop services
 docker-compose down
 
-# Edit docker-compose.yml
-# Change: QDRANT_VECTOR_DIMENSION=384
-# To:     QDRANT_VECTOR_DIMENSION=1536  # for OpenAI
+# Edit connector.toml
+# Change: vector_dimension = 384
+# To:     vector_dimension = 1536  # for OpenAI
 
 # Restart
 docker-compose up -d
@@ -332,7 +335,7 @@ sleep 3
 **Error:** `Vector dimension mismatch: expected 384, got 1536`
 
 **Solution:** 
-1. Update `QDRANT_VECTOR_DIMENSION` in docker-compose.yml
+1. Update `vector_dimension` in `connector.toml`
 2. Restart connector: `docker-compose restart qdrant-sink`
 3. Or recreate collection with correct dimension
 
@@ -383,7 +386,7 @@ docker-compose down -v --rmi all
 
 ## Next Steps
 
-1. **Production Deployment**: See main [README](../../connectors/sink-qdrant/README.md) for production setup
+1. **Production Deployment**: See main [README](../README.md) for production setup
 2. **Custom Embeddings**: Integrate your own embedding pipeline
 3. **Multi-Topic Routing**: Use `connector-multi-topic.toml` to route multiple topics to different collections
 4. **Qdrant Cloud**: Use managed Qdrant with `QDRANT_API_KEY`
@@ -394,11 +397,11 @@ docker-compose down -v --rmi all
 - [Qdrant Documentation](https://qdrant.tech/documentation/)
 - [Sentence Transformers](https://www.sbert.net/)
 - [RAG Tutorial](https://qdrant.tech/articles/what-is-rag-in-ai/)
-- [Connector Development Guide](../../info/connector-development-guide.md)
+- [Configuration Guide](../config/README.md)
 
 ## Support
 
 For issues or questions:
-- Check [connector logs](../../connectors/sink-qdrant/README.md#troubleshooting)
-- Review [development guide](../../info/connector-development-guide.md)
+- Check [connector logs](../README.md#troubleshooting)
+- Review [configuration guide](../config/README.md)
 - Open an issue on GitHub

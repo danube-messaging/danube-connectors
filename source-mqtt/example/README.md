@@ -48,8 +48,8 @@ Your terminal (validated data)
 
 **Configuration:**
 - **`connector.toml`** - Connector config with **3 schemas enabled** for validation testing
-- **`docker-compose.yml`** - Complete stack (etcd, Danube, Mosquitto, connector, test publisher)
-- **`danube_broker.yml`** - Danube broker configuration
+- **`docker-compose.yml`** - Complete stack (Danube, Mosquitto, connector, test publisher)
+- **`../../example_shared/danube_broker_no_auth.yml`** - Shared Danube broker configuration used by all connector examples
 - **`mosquitto.conf`** - MQTT broker configuration
 
 **Schema Files (schemas/):**
@@ -72,7 +72,7 @@ Your terminal (validated data)
 
 - Docker & Docker Compose
 - 8GB RAM recommended
-- Ports available: 1883, 2379, 6650, 9001
+- Ports available: 1883, 6650, 9001
 
 ### 1. Start Everything
 
@@ -82,11 +82,14 @@ docker-compose up -d
 ```
 
 This starts:
-- **etcd** - Danube's metadata store
 - **danube-broker** - Message broker with built-in Schema Registry
 - **mosquitto** - MQTT broker
 - **mqtt-connector** - Source connector with schema validation enabled
 - **mqtt-test-publisher** - Publishes schema-compliant messages every 5 seconds
+
+**Shared Danube broker config:**
+- The example mounts `../../example_shared/danube_broker_no_auth.yml`
+- Update that single file when Danube broker config changes for all connector examples
 
 ### 2. Watch the Logs
 
@@ -113,7 +116,7 @@ Expected connector output:
 ```
 [INFO] Configuration loaded and validated successfully
 [INFO] Schemas configured: 3
-[INFO] Topic Mappings: 4 configured
+[INFO] Routes: 4 configured
 [INFO] Schema auto-registering: sensor-telemetry-v1
 [INFO] Schema auto-registering: device-telemetry-v1  
 [INFO] Schema auto-registering: debug-logs
@@ -268,7 +271,7 @@ docker pull ghcr.io/danube-messaging/danube-cli:latest
 ```
 
 
-**Topic Mappings (MQTT → Danube):**
+**Routes (MQTT → Danube):**
 
 The connector routes MQTT messages to Danube topics based on `connector.toml`:
 
@@ -399,8 +402,8 @@ docker exec mqtt-example-broker mosquitto_sub -t '#' -v
 # Check connector logs
 docker logs mqtt-example-connector
 
-# Check Danube broker
-curl http://localhost:6650/health
+# Check Danube broker metrics endpoint
+curl http://localhost:9040/metrics
 
 # Restart if needed
 docker-compose restart mqtt-example-connector

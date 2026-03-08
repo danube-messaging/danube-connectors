@@ -27,10 +27,11 @@ This example shows how to:
 └────────┬────────┘
          │ Events (JSON)
          ▼
-┌─────────────────┐     ┌──────────┐
-│ Danube Broker   │────▶│   ETCD   │
-│  Topic: events  │     │ Metadata │
-└────────┬────────┘     └──────────┘
+┌─────────────────┐
+│ Danube Broker   │
+│  Topic: events  │
+│  Embedded Raft  │
+└────────┬────────┘
          │ Stream
          ▼
 ┌─────────────────┐
@@ -51,7 +52,7 @@ This example shows how to:
 ### 1. Start the Stack
 
 ```bash
-# Start all services (ETCD, Danube, Topic Init, MinIO, Connector)
+# Start all services (Danube, Topic Init, MinIO, Connector)
 docker-compose up -d
 
 # Check logs
@@ -62,20 +63,22 @@ docker-compose ps
 ```
 
 **Startup Sequence:**
-1. **ETCD** starts and becomes healthy
-2. **Danube Broker** starts (depends on ETCD)
-3. **Topic Init** registers schema and creates topic with validation (depends on Danube)
+1. **Danube Broker** starts as a single-node broker using embedded Raft metadata
+2. **Topic Init** registers schema and creates topic with validation (depends on Danube)
    - Registers `events-schema-v1` using `danube-admin-cli schemas register`
    - Creates `/default/events` topic with schema validation using `danube-admin-cli topics create`
-4. **MinIO** starts and becomes healthy
-5. **MinIO Init** creates `delta-tables` bucket (depends on MinIO)
-6. **Delta Lake Sink** starts (depends on topic creation + MinIO bucket)
+3. **MinIO** starts and becomes healthy
+4. **MinIO Init** creates `delta-tables` bucket (depends on MinIO)
+5. **Delta Lake Sink** starts (depends on topic creation + MinIO bucket)
    - Validates incoming messages against `events-schema-v1`
    - Deserializes JSON payloads automatically
    - Extracts fields using configured mappings
 
+**Shared Danube broker config:**
+- The example mounts `../../example_shared/danube_broker_no_auth.yml`
+- Update that single file when Danube broker config changes for all connector examples
+
 Services:
-- **ETCD**: `http://localhost:2379` (Danube metadata storage)
 - **Danube Broker**: `http://localhost:6650`
 - **Danube Admin API**: `http://localhost:50051`
 - **Danube Metrics**: `http://localhost:9040/metrics`
@@ -335,7 +338,6 @@ field_mappings = [
 docker-compose ps
 
 # Check logs for specific service
-docker-compose logs etcd
 docker-compose logs danube-broker
 docker-compose logs minio
 docker-compose logs deltalake-sink
@@ -487,8 +489,8 @@ For production use:
 
 ## Resources
 
-- **[Delta Lake Sink Connector Documentation](../../connectors/sink-deltalake/README.md)**
-- **[Configuration Guide](../../connectors/sink-deltalake/config/README.md)**
+- **[Delta Lake Sink Connector Documentation](../README.md)**
+- **[Configuration Guide](../config/README.md)**
 - [Delta Lake Documentation](https://docs.delta.io/)
 - [Danube Documentation](https://github.com/danube-messaging/danube)
 - [MinIO Documentation](https://min.io/docs/)
