@@ -98,13 +98,13 @@ impl ConfigValidate for MqttSourceConfig {
         for schema in &self.core.schemas {
             let topic_exists = self
                 .mqtt
-                .topic_mappings
+                .routes
                 .iter()
-                .any(|mapping| mapping.danube_topic == schema.topic);
+                .any(|mapping| mapping.to == schema.topic);
 
             if !topic_exists {
                 tracing::warn!(
-                    "Schema configured for topic '{}' but no topic mapping exists for it",
+                    "Schema configured for topic '{}' but no route exists for it",
                     schema.topic
                 );
             }
@@ -149,8 +149,8 @@ pub struct MqttConfig {
     #[serde(default = "default_max_packet_size")]
     pub max_packet_size: usize,
 
-    /// Topic mappings (MQTT topic -> Danube topic)
-    pub topic_mappings: Vec<TopicMapping>,
+    /// Routes (MQTT topic -> Danube topic)
+    pub routes: Vec<TopicMapping>,
 
     /// Clean session on connect
     #[serde(default = "default_true")]
@@ -201,21 +201,21 @@ impl MqttConfig {
             ));
         }
 
-        if self.topic_mappings.is_empty() {
+        if self.routes.is_empty() {
             return Err(danube_connect_core::ConnectorError::config(
-                "At least one topic mapping is required",
+                "At least one route is required",
             ));
         }
 
-        for mapping in &self.topic_mappings {
-            if mapping.mqtt_topic.is_empty() {
+        for mapping in &self.routes {
+            if mapping.from.is_empty() {
                 return Err(danube_connect_core::ConnectorError::config(
-                    "MQTT topic cannot be empty",
+                    "Route 'from' cannot be empty",
                 ));
             }
-            if mapping.danube_topic.is_empty() {
+            if mapping.to.is_empty() {
                 return Err(danube_connect_core::ConnectorError::config(
-                    "Danube topic cannot be empty",
+                    "Route 'to' cannot be empty",
                 ));
             }
         }
@@ -278,10 +278,10 @@ impl From<QoS> for rumqttc::QoS {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TopicMapping {
     /// MQTT topic pattern (supports wildcards: +, #)
-    pub mqtt_topic: String,
+    pub from: String,
 
     /// Target Danube topic
-    pub danube_topic: String,
+    pub to: String,
 
     /// QoS level for MQTT subscription
     #[serde(default = "default_qos")]
@@ -329,9 +329,9 @@ mod tests {
             keep_alive_secs: 60,
             connection_timeout_secs: 30,
             max_packet_size: 1024 * 1024,
-            topic_mappings: vec![TopicMapping {
-                mqtt_topic: "sensors/#".to_string(),
-                danube_topic: "/mqtt/sensors".to_string(),
+            routes: vec![TopicMapping {
+                from: "sensors/#".to_string(),
+                to: "/mqtt/sensors".to_string(),
                 qos: QoS::AtLeastOnce,
                 partitions: 0,
                 reliable_dispatch: None,
@@ -349,7 +349,7 @@ mod tests {
 
         // Test empty topic mappings
         config.broker_host = "localhost".to_string();
-        config.topic_mappings = vec![];
+        config.routes = vec![];
         assert!(config.validate().is_err());
     }
 }

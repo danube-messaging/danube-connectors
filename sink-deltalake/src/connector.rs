@@ -43,14 +43,14 @@ impl DeltaLakeSinkConnector {
         mapping: &TopicMapping,
     ) -> ConnectorResult<&mut DeltaTable> {
         // Check if table already exists
-        if !self.tables.contains_key(&mapping.delta_table_path) {
-            info!("Opening Delta table at path: {}", mapping.delta_table_path);
+        if !self.tables.contains_key(&mapping.to) {
+            info!("Opening Delta table at path: {}", mapping.to);
 
             // Configure storage options based on backend
             let storage_options = self.build_storage_options()?;
 
             // Parse table path as URL
-            let table_url = Url::parse(&mapping.delta_table_path).map_err(|e| {
+            let table_url = Url::parse(&mapping.to).map_err(|e| {
                 ConnectorError::fatal(format!("Invalid Delta table path URL: {}", e))
             })?;
 
@@ -62,13 +62,13 @@ impl DeltaLakeSinkConnector {
             .await
             {
                 Ok(table) => {
-                    info!("Loaded existing Delta table: {}", mapping.delta_table_path);
+                    info!("Loaded existing Delta table: {}", mapping.to);
                     table
                 }
                 Err(DeltaTableError::NotATable(_)) => {
                     info!(
                         "Table does not exist, creating new Delta table: {}",
-                        mapping.delta_table_path
+                        mapping.to
                     );
                     self.create_table(mapping, storage_options).await?
                 }
@@ -81,11 +81,11 @@ impl DeltaLakeSinkConnector {
             };
 
             // Cache the table
-            self.tables.insert(mapping.delta_table_path.clone(), table);
+            self.tables.insert(mapping.to.clone(), table);
         }
 
         // Return mutable reference to the table
-        Ok(self.tables.get_mut(&mapping.delta_table_path).unwrap())
+        Ok(self.tables.get_mut(&mapping.to).unwrap())
     }
 
     /// Create a new Delta table with user-defined schema
@@ -111,13 +111,13 @@ impl DeltaLakeSinkConnector {
 
         // Create Delta table
         let table = CreateBuilder::new()
-            .with_location(&mapping.delta_table_path)
+            .with_location(&mapping.to)
             .with_storage_options(storage_options)
             .with_columns(delta_fields)
             .await
             .map_err(|e| ConnectorError::fatal(format!("Failed to create Delta table: {}", e)))?;
 
-        info!("Created new Delta table: {}", mapping.delta_table_path);
+        info!("Created new Delta table: {}", mapping.to);
         Ok(table)
     }
 
@@ -182,7 +182,7 @@ impl DeltaLakeSinkConnector {
         debug!(
             "Writing batch of {} records to Delta table: {}",
             records.len(),
-            mapping.delta_table_path
+            mapping.to
         );
 
         // Convert records to Arrow RecordBatch
@@ -195,10 +195,7 @@ impl DeltaLakeSinkConnector {
         // Note: RecordBatchWriter is not Sync, so we can't cache it
         let mut writer = RecordBatchWriter::for_table(table).map_err(|e| {
             ConnectorError::fatal_with_source(
-                format!(
-                    "Failed to create writer for Delta table: {}",
-                    mapping.delta_table_path
-                ),
+                format!("Failed to create writer for Delta table: {}", mapping.to),
                 e,
             )
         })?;
@@ -206,10 +203,7 @@ impl DeltaLakeSinkConnector {
         // Write the record batch
         writer.write(record_batch).await.map_err(|e| {
             ConnectorError::retryable_with_source(
-                format!(
-                    "Failed to write batch to Delta table: {}",
-                    mapping.delta_table_path
-                ),
+                format!("Failed to write batch to Delta table: {}", mapping.to),
                 e,
             )
         })?;
@@ -217,10 +211,7 @@ impl DeltaLakeSinkConnector {
         // Flush and commit the write
         let new_version = writer.flush_and_commit(table).await.map_err(|e| {
             ConnectorError::retryable_with_source(
-                format!(
-                    "Failed to commit to Delta table: {}",
-                    mapping.delta_table_path
-                ),
+                format!("Failed to commit to Delta table: {}", mapping.to),
                 e,
             )
         })?;
@@ -230,10 +221,7 @@ impl DeltaLakeSinkConnector {
         // reload to ensure we have the latest state for subsequent writes
         table.load().await.map_err(|e| {
             ConnectorError::retryable_with_source(
-                format!(
-                    "Failed to reload Delta table after commit: {}",
-                    mapping.delta_table_path
-                ),
+                format!("Failed to reload Delta table after commit: {}", mapping.to),
                 e,
             )
         })?;
@@ -241,7 +229,7 @@ impl DeltaLakeSinkConnector {
         info!(
             "Successfully wrote {} records to Delta table: {} (version: {})",
             records.len(),
-            mapping.delta_table_path,
+            mapping.to,
             new_version
         );
 
@@ -292,16 +280,16 @@ impl SinkConnector for DeltaLakeSinkConnector {
         );
 
         // Log topic mappings
-        for mapping in &self.config.deltalake.topic_mappings {
+        for mapping in &self.config.deltalake.routes {
             let schema_info = mapping
                 .expected_schema_subject
                 .as_ref()
                 .map(|s| format!(", schema: {}", s))
                 .unwrap_or_default();
             info!(
-                "Topic Mapping: {} -> {} (fields: {}{})",
-                mapping.topic,
-                mapping.delta_table_path,
+                "Route: {} -> {} (fields: {}{})",
+                mapping.from,
+                mapping.to,
                 mapping.field_mappings.len(),
                 schema_info
             );
@@ -315,10 +303,10 @@ impl SinkConnector for DeltaLakeSinkConnector {
         let configs = self
             .config
             .deltalake
-            .topic_mappings
+            .routes
             .iter()
             .map(|mapping| ConsumerConfig {
-                topic: mapping.topic.clone(),
+                topic: mapping.from.clone(),
                 subscription: mapping.subscription.clone(),
                 consumer_name: format!(
                     "{}-{}",
@@ -350,9 +338,9 @@ impl SinkConnector for DeltaLakeSinkConnector {
             let mapping = self
                 .config
                 .deltalake
-                .topic_mappings
+                .routes
                 .iter()
-                .find(|m| m.topic == topic)
+                .find(|m| m.from == topic)
                 .cloned()
                 .ok_or_else(|| {
                     ConnectorError::fatal(format!("No mapping found for topic: {}", topic))

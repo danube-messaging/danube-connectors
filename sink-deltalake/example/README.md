@@ -134,8 +134,8 @@ The example uses JSON Schema validation to ensure data quality:
 
 **Configuration** (`connector.toml`):
 ```toml
-[[deltalake.topic_mappings]]
-topic = "/default/events"
+[[deltalake.routes]]
+from = "/default/events"
 expected_schema_subject = "events-schema-v1"  # Validate against this schema
 
 field_mappings = [
@@ -235,9 +235,9 @@ EOF
 The example includes a pre-configured `connector.toml` with:
 
 - **Storage Backend**: S3 (MinIO)
-- **Topic Mapping**: `/default/events` → `s3://delta-tables/events`
+- **Route**: `/default/events` → `s3://delta-tables/events`
 - **Schema**: Flexible schema supporting multiple event types
-- **Batching**: 100 records or 1 second flush interval
+- **Runtime Processing**: Shared `[processing]` settings control batch size and timeout
 - **Metadata**: Includes Danube metadata in `_danube_metadata` column
 
 ## Monitoring
@@ -279,15 +279,14 @@ curl http://localhost:9040/metrics
 
 The example uses a flexible schema that accommodates different event types:
 
-```rust
-schema = [
-    { name = "event_type", data_type = "Utf8", nullable = false },
-    { name = "user_id", data_type = "Utf8", nullable = false },
-    { name = "timestamp", data_type = "Utf8", nullable = false },
-    { name = "product", data_type = "Utf8", nullable = true },
-    { name = "amount", data_type = "Int64", nullable = true },
-    { name = "currency", data_type = "Utf8", nullable = true },
-    // ... more fields
+```toml
+field_mappings = [
+    { json_path = "event_type", column = "event_type", data_type = "Utf8", nullable = false },
+    { json_path = "user_id", column = "user_id", data_type = "Utf8", nullable = false },
+    { json_path = "timestamp", column = "timestamp", data_type = "Utf8", nullable = false },
+    { json_path = "product", column = "product", data_type = "Utf8", nullable = true },
+    { json_path = "amount", column = "amount", data_type = "Int64", nullable = true },
+    { json_path = "currency", column = "currency", data_type = "Utf8", nullable = true },
 ]
 ```
 
@@ -420,44 +419,44 @@ docker-compose down --rmi all
 
 ### Multiple Topics
 
-Add more topic mappings in `connector.toml`:
+Add more routes in `connector.toml`:
 
 ```toml
-[[deltalake.topic_mappings]]
-topic = "/analytics/clicks"
-delta_table_path = "s3://delta-tables/clicks"
-schema_type = "Json"
-schema = [
-    { name = "user_id", data_type = "Utf8", nullable = false },
-    { name = "page_url", data_type = "Utf8", nullable = false },
-    { name = "timestamp", data_type = "Timestamp", nullable = false },
+[[deltalake.routes]]
+from = "/analytics/clicks"
+subscription = "deltalake-clicks"
+to = "s3://delta-tables/clicks"
+field_mappings = [
+    { json_path = "user_id", column = "user_id", data_type = "Utf8", nullable = false },
+    { json_path = "page_url", column = "page_url", data_type = "Utf8", nullable = false },
+    { json_path = "timestamp", column = "timestamp", data_type = "Timestamp", nullable = false },
 ]
 
-[[deltalake.topic_mappings]]
-topic = "/logs/application"
-delta_table_path = "s3://delta-tables/logs"
-schema_type = "Json"
-schema = [
-    { name = "level", data_type = "Utf8", nullable = false },
-    { name = "message", data_type = "Utf8", nullable = false },
-    { name = "timestamp", data_type = "Timestamp", nullable = false },
+[[deltalake.routes]]
+from = "/logs/application"
+subscription = "deltalake-logs"
+to = "s3://delta-tables/logs"
+field_mappings = [
+    { json_path = "level", column = "level", data_type = "Utf8", nullable = false },
+    { json_path = "message", column = "message", data_type = "Utf8", nullable = false },
+    { json_path = "timestamp", column = "timestamp", data_type = "Timestamp", nullable = false },
 ]
 ```
 
 ### Performance Tuning
 
-Adjust batch settings for your workload:
+Adjust the shared runtime processing settings for your workload:
 
 ```toml
 # High throughput
-[deltalake]
+[processing]
 batch_size = 5000
-flush_interval_ms = 10000
+batch_timeout_ms = 10000
 
 # Low latency
-[deltalake]
+[processing]
 batch_size = 100
-flush_interval_ms = 500
+batch_timeout_ms = 500
 ```
 
 ### Production Deployment

@@ -107,12 +107,12 @@ per_ip_enabled = false
 # per_ip_requests_per_second = 10
 
 # Endpoint 1: Payment events (partitioned, reliable)
-[[endpoints]]
+[[routes]]
 # HTTP path for this endpoint
-path = "/webhooks/payments"
+from = "/webhooks/payments"
 
 # Danube topic to publish to
-danube_topic = "/stripe/payments"
+to = "/stripe/payments"
 
 # Number of partitions (0 or omitted = non-partitioned)
 partitions = 2
@@ -122,21 +122,21 @@ partitions = 2
 reliable_dispatch = true
 
 # Optional: per-endpoint rate limiting (overrides platform-wide)
-# [endpoints.rate_limit]
+# [routes.rate_limit]
 # requests_per_second = 100
 # burst_size = 200
 
 # Endpoint 2: Customer events (partitioned, non-reliable)
-[[endpoints]]
-path = "/webhooks/customers"
-danube_topic = "/stripe/customers"
+[[routes]]
+from = "/webhooks/customers"
+to = "/stripe/customers"
 partitions = 2
 reliable_dispatch = false
 
 # Endpoint 3: Subscription events (non-partitioned, reliable, with string schema)
-[[endpoints]]
-path = "/webhooks/subscriptions"
-danube_topic = "/stripe/subscriptions"
+[[routes]]
+from = "/webhooks/subscriptions"
+to = "/stripe/subscriptions"
 # partitions = 0  # Omitted = non-partitioned (defaults to 0)
 reliable_dispatch = true
 

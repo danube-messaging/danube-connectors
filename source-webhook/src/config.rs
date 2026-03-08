@@ -23,8 +23,8 @@ pub struct WebhookSourceConfig {
     /// Optional platform-wide rate limiting
     #[serde(default)]
     pub rate_limit: Option<RateLimitConfig>,
-    /// Endpoint definitions (multiple endpoints for different event types)
-    pub endpoints: Vec<EndpointConfig>,
+    /// Route definitions (multiple endpoints for different event types)
+    pub routes: Vec<EndpointConfig>,
 }
 
 /// HTTP server configuration
@@ -112,9 +112,9 @@ pub struct RateLimitConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct EndpointConfig {
     /// HTTP path for this endpoint (e.g., "/webhooks/payments")
-    pub path: String,
+    pub from: String,
     /// Danube topic to publish to
-    pub danube_topic: String,
+    pub to: String,
     /// Number of partitions for the topic (0 or omitted = non-partitioned)
     #[serde(default)]
     pub partitions: u32,
@@ -228,32 +228,32 @@ impl ConfigValidate for WebhookSourceConfig {
             return Err(ConnectorError::config("connector_name cannot be empty"));
         }
 
-        if self.endpoints.is_empty() {
+        if self.routes.is_empty() {
             return Err(ConnectorError::config(
-                "At least one endpoint must be configured",
+                "At least one route must be configured",
             ));
         }
 
         let mut paths = std::collections::HashSet::new();
-        for endpoint in &self.endpoints {
-            if !paths.insert(&endpoint.path) {
+        for endpoint in &self.routes {
+            if !paths.insert(&endpoint.from) {
                 return Err(ConnectorError::config(format!(
-                    "Duplicate endpoint path: {}",
-                    endpoint.path
+                    "Duplicate route source path: {}",
+                    endpoint.from
                 )));
             }
 
-            if !endpoint.path.starts_with('/') {
+            if !endpoint.from.starts_with('/') {
                 return Err(ConnectorError::config(format!(
-                    "Endpoint path must start with '/': {}",
-                    endpoint.path
+                    "Route 'from' must start with '/': {}",
+                    endpoint.from
                 )));
             }
 
-            if endpoint.danube_topic.is_empty() {
+            if endpoint.to.is_empty() {
                 return Err(ConnectorError::config(format!(
-                    "danube_topic cannot be empty for endpoint: {}",
-                    endpoint.path
+                    "Route 'to' cannot be empty for source path: {}",
+                    endpoint.from
                 )));
             }
         }

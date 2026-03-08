@@ -30,8 +30,8 @@ impl WebhookConnector {
     pub fn with_config(config: WebhookSourceConfig, schemas: Vec<SchemaMapping>) -> Self {
         // Build endpoint map
         let mut endpoints = HashMap::new();
-        for endpoint in &config.endpoints {
-            endpoints.insert(endpoint.path.clone(), endpoint.clone());
+        for endpoint in &config.routes {
+            endpoints.insert(endpoint.from.clone(), endpoint.clone());
         }
 
         Self {
@@ -68,7 +68,7 @@ impl WebhookConnector {
         };
 
         // Create source record with typed payload
-        let mut record = SourceRecord::new(endpoint_config.danube_topic.clone(), payload_value)
+        let mut record = SourceRecord::new(endpoint_config.to.clone(), payload_value)
             .with_attribute("webhook.source", connector_name)
             .with_attribute("webhook.endpoint", endpoint_path)
             .with_attribute("webhook.timestamp", Utc::now().to_rfc3339());
@@ -103,16 +103,16 @@ impl SourceConnector for WebhookConnector {
         })?;
 
         info!(
-            "Webhook Configuration: connector={}, endpoints={}",
+            "Webhook Configuration: connector={}, routes={}",
             self.config.core.connector_name,
-            self.config.endpoints.len()
+            self.config.routes.len()
         );
 
         // Log endpoint configurations
-        for endpoint in &self.config.endpoints {
+        for endpoint in &self.config.routes {
             info!(
-                "Endpoint: {} -> {} (Partitions: {})",
-                endpoint.path, endpoint.danube_topic, endpoint.partitions
+                "Route: {} -> {} (Partitions: {})",
+                endpoint.from, endpoint.to, endpoint.partitions
             );
         }
 
@@ -158,7 +158,7 @@ impl SourceConnector for WebhookConnector {
         // Use HashMap to deduplicate topics (multiple endpoints can use same topic)
         let mut topics: HashMap<String, (usize, bool)> = HashMap::new();
 
-        for endpoint in &self.config.endpoints {
+        for endpoint in &self.config.routes {
             // Use partitions from config directly
             // 0 = non-partitioned (runtime won't call with_partitions)
             // >0 = partitioned with n partitions
@@ -167,10 +167,7 @@ impl SourceConnector for WebhookConnector {
             // Use reliable_dispatch from config
             let reliable_dispatch = endpoint.reliable_dispatch;
 
-            topics.insert(
-                endpoint.danube_topic.clone(),
-                (partitions, reliable_dispatch),
-            );
+            topics.insert(endpoint.to.clone(), (partitions, reliable_dispatch));
         }
 
         let producer_configs: Vec<_> = topics
@@ -200,7 +197,7 @@ impl SourceConnector for WebhookConnector {
 
         if producer_configs.is_empty() {
             return Err(ConnectorError::config(
-                "No endpoints configured. Please add endpoint mappings in the configuration.",
+                "No routes configured. Please add route mappings in the configuration.",
             ));
         }
 

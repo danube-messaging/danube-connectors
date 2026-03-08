@@ -207,7 +207,7 @@ Run the standalone test publisher:
 ./test-publisher.sh
 ```
 
-This will continuously send webhooks to all configured endpoints and show the results.
+This will continuously send webhooks to all configured routes and show the results.
 
 ## Configuration
 
@@ -228,14 +228,14 @@ This example demonstrates schema validation with 2 configured schemas:
 
 **How it works:**
 1. Webhook arrives at endpoint
-2. Connector routes to Danube topic based on endpoint mapping
+2. Connector routes to Danube topic based on the configured route
 3. If schema configured for topic → Runtime validates payload
 4. Valid messages published to Danube
 5. Invalid messages rejected with error
 
-### Endpoints
+### Routes
 
-The example includes 4 webhook endpoints:
+The example includes 4 webhook routes:
 
 | Endpoint | Danube Topic | Partitions | Reliable | Schema | Use Case |
 |----------|--------------|------------|----------|--------|----------|
@@ -331,7 +331,7 @@ docker pull ghcr.io/danube-messaging/danube-cli:latest
 
 ### Consume Webhook Messages
 
-**Topic Mappings (Webhook Endpoint → Danube):**
+**Routes (Webhook Endpoint → Danube):**
 
 The connector routes webhook requests to Danube topics based on `connector.toml`:
 
@@ -407,9 +407,9 @@ burst_size = 200
 per_ip_enabled = true
 per_ip_requests_per_second = 10
 
-[[endpoints]]
-path = "/webhooks/stripe/payments"
-danube_topic = "/stripe/payments"
+[[routes]]
+from = "/webhooks/stripe/payments"
+to = "/stripe/payments"
 partitions = 4
 reliable_dispatch = true
 ```
@@ -447,7 +447,7 @@ docker-compose logs webhook-connector
 ### Webhooks Returning 404
 
 - Verify endpoint path matches configuration
-- Check `connector.toml` endpoints section
+- Check `connector.toml` routes section
 - Endpoint paths are case-sensitive
 
 ### Webhooks Returning 429

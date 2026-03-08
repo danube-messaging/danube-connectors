@@ -59,17 +59,9 @@ pub struct DeltaLakeConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gcp_project_id: Option<String>,
 
-    /// Topic mappings: Danube topics → Delta Lake tables
+    /// Routes: Danube topics → Delta Lake tables
     #[serde(default)]
-    pub topic_mappings: Vec<TopicMapping>,
-
-    /// Global batch size (can be overridden per topic)
-    #[serde(default = "default_batch_size")]
-    pub batch_size: usize,
-
-    /// Global flush interval in milliseconds
-    #[serde(default = "default_flush_interval_ms")]
-    pub flush_interval_ms: u64,
+    pub routes: Vec<TopicMapping>,
 }
 
 /// Cloud storage backend for Delta Lake
@@ -147,13 +139,13 @@ impl FieldMapping {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TopicMapping {
     /// Danube topic to consume from
-    pub topic: String,
+    pub from: String,
 
     /// Subscription name for this consumer
     pub subscription: String,
 
     /// Delta Lake table path (e.g., "s3://bucket/path/to/table")
-    pub delta_table_path: String,
+    pub to: String,
 
     /// Expected schema subject for validation (schema already exists on topic)
     /// The runtime validates incoming messages match this schema
@@ -171,35 +163,6 @@ pub struct TopicMapping {
     /// Include Danube metadata as a JSON column (_danube_metadata)
     #[serde(default)]
     pub include_danube_metadata: bool,
-
-    /// Batch size for this specific topic (overrides global)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub batch_size: Option<usize>,
-
-    /// Flush interval for this specific topic (overrides global)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub flush_interval_ms: Option<u64>,
-}
-
-impl TopicMapping {
-    /// Get effective batch size (topic-specific or global)
-    pub fn effective_batch_size(&self, global: usize) -> usize {
-        self.batch_size.unwrap_or(global)
-    }
-
-    /// Get effective flush interval (topic-specific or global)
-    pub fn effective_flush_interval_ms(&self, global: u64) -> u64 {
-        self.flush_interval_ms.unwrap_or(global)
-    }
-}
-
-// Default values
-fn default_batch_size() -> usize {
-    1000
-}
-
-fn default_flush_interval_ms() -> u64 {
-    5000 // 5 seconds
 }
 
 fn default_true() -> bool {
@@ -209,7 +172,7 @@ fn default_true() -> bool {
 impl DeltaLakeSinkConfig {
     /// Initialize path_parts for all field mappings
     fn init_path_parts(&mut self) {
-        for mapping in &mut self.deltalake.topic_mappings {
+        for mapping in &mut self.deltalake.routes {
             for field_mapping in &mut mapping.field_mappings {
                 field_mapping.init_path_parts();
             }
@@ -265,9 +228,9 @@ impl ConfigEnvOverrides for DeltaLakeSinkConfig {
 impl ConfigValidate for DeltaLakeSinkConfig {
     fn validate_config(&self) -> ConnectorResult<()> {
         // Validate topic mappings
-        if self.deltalake.topic_mappings.is_empty() {
+        if self.deltalake.routes.is_empty() {
             return Err(ConnectorError::config(
-                "No topic mappings configured. Please add at least one [[deltalake.topic_mappings]] entry.",
+                "No routes configured. Please add at least one [[deltalake.routes]] entry.",
             ));
         }
 
@@ -302,20 +265,20 @@ impl ConfigValidate for DeltaLakeSinkConfig {
         }
 
         // Validate each topic mapping
-        for mapping in &self.deltalake.topic_mappings {
-            if mapping.topic.is_empty() {
-                return Err(ConnectorError::config("Topic cannot be empty"));
+        for mapping in &self.deltalake.routes {
+            if mapping.from.is_empty() {
+                return Err(ConnectorError::config("Route 'from' cannot be empty"));
             }
             if mapping.subscription.is_empty() {
                 return Err(ConnectorError::config("Subscription cannot be empty"));
             }
-            if mapping.delta_table_path.is_empty() {
-                return Err(ConnectorError::config("Delta table path cannot be empty"));
+            if mapping.to.is_empty() {
+                return Err(ConnectorError::config("Route 'to' cannot be empty"));
             }
             if mapping.field_mappings.is_empty() {
                 return Err(ConnectorError::config(format!(
-                    "Field mappings cannot be empty for topic '{}'. Please define at least one field mapping.",
-                    mapping.topic
+                    "Field mappings cannot be empty for route '{}'. Please define at least one field mapping.",
+                    mapping.from
                 )));
             }
 

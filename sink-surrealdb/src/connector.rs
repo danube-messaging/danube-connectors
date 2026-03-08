@@ -59,11 +59,11 @@ impl SurrealDBSinkConnector {
     pub fn with_config(config: SurrealDBSinkConfig) -> Self {
         let tables = config
             .surrealdb
-            .topic_mappings
+            .routes
             .iter()
             .map(|mapping| {
                 let context = TableContext::new(mapping.clone());
-                (mapping.topic.clone(), context)
+                (mapping.from.clone(), context)
             })
             .collect();
 
@@ -95,7 +95,7 @@ impl SurrealDBSinkConnector {
             return Ok(());
         }
 
-        let table_name = &context.mapping.table_name;
+        let table_name = &context.mapping.to;
         let batch_size = records.len();
 
         debug!(
@@ -213,7 +213,7 @@ impl SinkConnector for SurrealDBSinkConnector {
         info!("SurrealDB connection initialized successfully");
         info!(
             "Configured {} table mappings",
-            self.config.surrealdb.topic_mappings.len()
+            self.config.surrealdb.routes.len()
         );
 
         Ok(())
@@ -223,14 +223,11 @@ impl SinkConnector for SurrealDBSinkConnector {
         let configs = self
             .config
             .surrealdb
-            .topic_mappings
+            .routes
             .iter()
             .map(|mapping| ConsumerConfig {
-                topic: mapping.topic.clone(),
-                consumer_name: format!(
-                    "{}-{}",
-                    self.config.core.connector_name, mapping.table_name
-                ),
+                topic: mapping.from.clone(),
+                consumer_name: format!("{}-{}", self.config.core.connector_name, mapping.to),
                 subscription: mapping.subscription.clone(),
                 subscription_type: mapping.subscription_type.clone(),
                 expected_schema_subject: mapping.expected_schema_subject.clone(),
@@ -269,10 +266,7 @@ impl SinkConnector for SurrealDBSinkConnector {
         for (topic, context) in &self.tables {
             info!(
                 "  Topic '{}' → Table '{}': {} records ({} batches)",
-                topic,
-                context.mapping.table_name,
-                context.records_inserted,
-                context.batches_flushed
+                topic, context.mapping.to, context.records_inserted, context.batches_flushed
             );
         }
 
@@ -313,21 +307,19 @@ mod tests {
     #[test]
     fn test_table_context_creation() {
         let mapping = TopicMapping {
-            topic: "/test/topic".to_string(),
+            from: "/test/topic".to_string(),
             subscription: "test-sub".to_string(),
             subscription_type: SubscriptionType::Shared,
-            table_name: "events".to_string(),
+            to: "events".to_string(),
             include_danube_metadata: false,
             expected_schema_subject: None,
-            batch_size: Some(10),
-            flush_interval_ms: Some(5000),
             storage_mode: StorageMode::Document,
         };
 
         let context = TableContext::new(mapping.clone());
 
-        assert_eq!(context.mapping.topic, mapping.topic);
-        assert_eq!(context.mapping.table_name, mapping.table_name);
+        assert_eq!(context.mapping.from, mapping.from);
+        assert_eq!(context.mapping.to, mapping.to);
         assert_eq!(context.records_inserted, 0);
         assert_eq!(context.batches_flushed, 0);
         assert!(context.last_error.is_none());
@@ -351,19 +343,15 @@ mod tests {
                 password: None,
                 connection_timeout_secs: 30,
                 request_timeout_secs: 30,
-                topic_mappings: vec![TopicMapping {
-                    topic: "/test/topic".to_string(),
+                routes: vec![TopicMapping {
+                    from: "/test/topic".to_string(),
                     subscription: "test-sub".to_string(),
                     subscription_type: SubscriptionType::Shared,
-                    table_name: "events".to_string(),
+                    to: "events".to_string(),
                     include_danube_metadata: true,
                     expected_schema_subject: None,
-                    batch_size: None,
-                    flush_interval_ms: None,
                     storage_mode: StorageMode::Document,
                 }],
-                batch_size: 100,
-                flush_interval_ms: 1000,
             },
         };
 

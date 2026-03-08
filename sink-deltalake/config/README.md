@@ -112,7 +112,7 @@ azure_storage_account = "mystorageaccount"
 
 **Delta Table Path Format:**
 ```toml
-delta_table_path = "abfss://container@account.dfs.core.windows.net/path/to/table"
+to = "abfss://container@account.dfs.core.windows.net/path/to/table"
 ```
 
 ### Google Cloud Storage Configuration
@@ -128,18 +128,18 @@ gcp_project_id = "my-gcp-project"
 
 **Delta Table Path Format:**
 ```toml
-delta_table_path = "gs://my-bucket/path/to/table"
+to = "gs://my-bucket/path/to/table"
 ```
 
-## Topic Mappings
+## Routes
 
 Map Danube topics to Delta Lake tables:
 
 ```toml
-[[deltalake.topic_mappings]]
-topic = "/events/payments"
+[[deltalake.routes]]
+from = "/events/payments"
 subscription = "deltalake-payments"
-delta_table_path = "s3://my-bucket/tables/payments"
+to = "s3://my-bucket/tables/payments"
 write_mode = "append"  # or "overwrite"
 include_danube_metadata = true
 
@@ -157,19 +157,17 @@ field_mappings = [
 ]
 ```
 
-### Topic Mapping Options
+### Route Options
 
 | Option | Type | Required | Description |
 |--------|------|----------|-------------|
-| `topic` | String | Yes | Danube topic to consume from (format: `/namespace/topic`) |
+| `from` | String | Yes | Danube topic to consume from (format: `/namespace/topic`) |
 | `subscription` | String | Yes | Subscription name for this consumer |
-| `delta_table_path` | String | Yes | Full path to Delta table (includes cloud prefix) |
+| `to` | String | Yes | Full path to Delta table (includes cloud prefix) |
 | `expected_schema_subject` | String | Recommended | Schema subject for validation (created by producer/admin) |
 | `field_mappings` | Array | Yes | Field mappings from JSON to Delta Lake columns (see below) |
 | `write_mode` | String | No | `append` (default) or `overwrite` |
 | `include_danube_metadata` | Boolean | No | Add `_danube_metadata` JSON column (default: false) |
-| `batch_size` | Integer | No | Override global batch size for this topic |
-| `flush_interval_ms` | Integer | No | Override global flush interval for this topic |
 
 ## Schema Validation
 
@@ -180,8 +178,8 @@ field_mappings = [
 Specify the schema subject to enable automatic validation:
 
 ```toml
-[[deltalake.topic_mappings]]
-topic = "/events/payments"
+[[deltalake.routes]]
+from = "/events/payments"
 expected_schema_subject = "payment-events-v1"  # Schema created by producer
 field_mappings = [...]
 ```
@@ -300,55 +298,17 @@ field_mappings = [
 ]
 ```
 
-## Batch Processing
+## Runtime Processing
 
-Configure batching for optimal throughput:
+Batching and flush timing are managed by `danube-connect-core` runtime settings rather than the Delta Lake adapter.
 
 ```toml
-[deltalake]
-# Global defaults
+[processing]
 batch_size = 1000
-flush_interval_ms = 5000
+batch_timeout_ms = 5000
 ```
 
-### Batch Settings
-
-| Setting | Type | Default | Description |
-|---------|------|---------|-------------|
-| `batch_size` | Integer | 1000 | Number of records to batch before writing |
-| `flush_interval_ms` | Integer | 5000 | Maximum time (ms) to wait before flushing |
-
-### Per-Topic Overrides
-
-```toml
-# High-volume topic with larger batches
-[[deltalake.topic_mappings]]
-topic = "/events/high-volume"
-batch_size = 5000
-flush_interval_ms = 10000
-expected_schema_subject = "high-volume-v1"
-field_mappings = [...]
-
-# Low-latency topic with smaller batches
-[[deltalake.topic_mappings]]
-topic = "/alerts/critical"
-batch_size = 100
-flush_interval_ms = 1000
-expected_schema_subject = "critical-alerts-v1"
-field_mappings = [...]
-```
-
-### Performance Tuning
-
-**High Throughput:**
-- Increase `batch_size` (e.g., 5000-10000)
-- Increase `flush_interval_ms` (e.g., 10000-30000)
-- Trade-off: Higher latency
-
-**Low Latency:**
-- Decrease `batch_size` (e.g., 100-500)
-- Decrease `flush_interval_ms` (e.g., 1000-2000)
-- Trade-off: Lower throughput
+Tune the shared processing section for throughput or latency without adding connector-specific batch settings.
 
 ## Environment Variables
 
@@ -403,13 +363,10 @@ s3_region = "us-east-1"
 s3_endpoint = "http://localhost:9000"
 s3_allow_http = true
 
-batch_size = 1000
-flush_interval_ms = 5000
-
-[[deltalake.topic_mappings]]
-topic = "/events/payments"
+[[deltalake.routes]]
+from = "/events/payments"
 subscription = "deltalake-payments"
-delta_table_path = "s3://my-bucket/tables/payments"
+to = "s3://my-bucket/tables/payments"
 include_danube_metadata = true
 expected_schema_subject = "payment-events-v1"
 field_mappings = [
@@ -418,11 +375,10 @@ field_mappings = [
     { json_path = "currency", column = "currency", data_type = "Utf8", nullable = false },
 ]
 
-[[deltalake.topic_mappings]]
-topic = "/events/users"
+[[deltalake.routes]]
+from = "/events/users"
 subscription = "deltalake-users"
-delta_table_path = "s3://my-bucket/tables/users"
-batch_size = 2000
+to = "s3://my-bucket/tables/users"
 expected_schema_subject = "user-events-v1"
 field_mappings = [
     { json_path = "user_id", column = "user_id", data_type = "Utf8", nullable = false },
@@ -442,13 +398,10 @@ metrics_port = 9090
 storage_backend = "azure"
 azure_storage_account = "mystorageaccount"
 
-batch_size = 1000
-flush_interval_ms = 5000
-
-[[deltalake.topic_mappings]]
-topic = "/iot/sensors"
+[[deltalake.routes]]
+from = "/iot/sensors"
 subscription = "deltalake-sensors"
-delta_table_path = "abfss://delta-tables@mystorageaccount.dfs.core.windows.net/sensors"
+to = "abfss://delta-tables@mystorageaccount.dfs.core.windows.net/sensors"
 expected_schema_subject = "sensor-data-v1"
 field_mappings = [
     { json_path = "sensor_id", column = "sensor_id", data_type = "Utf8", nullable = false },
@@ -468,13 +421,10 @@ metrics_port = 9090
 storage_backend = "gcs"
 gcp_project_id = "my-gcp-project"
 
-batch_size = 5000
-flush_interval_ms = 10000
-
-[[deltalake.topic_mappings]]
-topic = "/analytics/events"
+[[deltalake.routes]]
+from = "/analytics/events"
 subscription = "deltalake-analytics"
-delta_table_path = "gs://my-bucket/tables/analytics"
+to = "gs://my-bucket/tables/analytics"
 include_danube_metadata = true
 expected_schema_subject = "analytics-events-v1"
 field_mappings = [

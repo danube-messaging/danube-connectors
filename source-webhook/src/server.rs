@@ -159,7 +159,7 @@ async fn webhook_handler(
         Json(json!({
             "status": "accepted",
             "endpoint": endpoint_path,
-            "topic": endpoint_config.danube_topic,
+            "topic": endpoint_config.to,
         })),
     )
         .into_response())

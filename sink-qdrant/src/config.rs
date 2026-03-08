@@ -72,18 +72,8 @@ pub struct QdrantConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
 
-    /// Topic mappings: Danube topic → Qdrant collection configuration
-    pub topic_mappings: Vec<TopicMapping>,
-
-    /// Global batch size for bulk upserts (10-500)
-    /// Can be overridden per topic
-    #[serde(default = "default_batch_size")]
-    pub batch_size: usize,
-
-    /// Global batch timeout in milliseconds
-    /// Can be overridden per topic
-    #[serde(default = "default_batch_timeout")]
-    pub batch_timeout_ms: u64,
+    /// Routes: Danube topic → Qdrant collection configuration
+    pub routes: Vec<TopicMapping>,
 
     /// Timeout for Qdrant operations in seconds
     #[serde(default = "default_timeout")]
@@ -94,7 +84,7 @@ pub struct QdrantConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TopicMapping {
     /// Danube topic to consume from (format: /{namespace}/{topic_name})
-    pub topic: String,
+    pub from: String,
 
     /// Subscription name for this topic
     pub subscription: String,
@@ -104,7 +94,7 @@ pub struct TopicMapping {
     pub subscription_type: SubscriptionType,
 
     /// Target Qdrant collection name
-    pub collection_name: String,
+    pub to: String,
 
     /// Vector dimension (must match embedding model for this topic)
     pub vector_dimension: usize,
@@ -126,38 +116,10 @@ pub struct TopicMapping {
     /// Schema must be registered in Danube Schema Registry
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expected_schema_subject: Option<String>,
-
-    /// Topic-specific batch size (overrides global)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub batch_size: Option<usize>,
-
-    /// Topic-specific batch timeout (overrides global)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub batch_timeout_ms: Option<u64>,
-}
-
-impl TopicMapping {
-    /// Get effective batch size (topic-specific or global)
-    pub fn effective_batch_size(&self, global: usize) -> usize {
-        self.batch_size.unwrap_or(global)
-    }
-
-    /// Get effective batch timeout (topic-specific or global)
-    pub fn effective_batch_timeout(&self, global: u64) -> u64 {
-        self.batch_timeout_ms.unwrap_or(global)
-    }
 }
 
 fn default_distance() -> Distance {
     Distance::Cosine
-}
-
-fn default_batch_size() -> usize {
-    100
-}
-
-fn default_batch_timeout() -> u64 {
-    1000
 }
 
 fn default_auto_create() -> bool {
@@ -209,24 +171,24 @@ impl QdrantConfig {
             ));
         }
 
-        if self.topic_mappings.is_empty() {
+        if self.routes.is_empty() {
             return Err(danube_connect_core::ConnectorError::config(
-                "At least one topic mapping is required",
+                "At least one route is required",
             ));
         }
 
         // Validate each topic mapping
-        for (idx, mapping) in self.topic_mappings.iter().enumerate() {
-            if mapping.topic.is_empty() {
+        for (idx, mapping) in self.routes.iter().enumerate() {
+            if mapping.from.is_empty() {
                 return Err(danube_connect_core::ConnectorError::config(format!(
-                    "Topic mapping {} has empty topic",
+                    "Route {} has empty 'from'",
                     idx
                 )));
             }
 
-            if mapping.collection_name.is_empty() {
+            if mapping.to.is_empty() {
                 return Err(danube_connect_core::ConnectorError::config(format!(
-                    "Topic mapping {} has empty collection name",
+                    "Route {} has empty 'to'",
                     idx
                 )));
             }
@@ -244,12 +206,6 @@ impl QdrantConfig {
                     idx
                 )));
             }
-        }
-
-        if self.batch_size == 0 {
-            return Err(danube_connect_core::ConnectorError::config(
-                "Batch size must be greater than 0",
-            ));
         }
 
         Ok(())
@@ -278,21 +234,17 @@ mod tests {
         let mut config = QdrantConfig {
             url: "http://localhost:6334".to_string(),
             api_key: None,
-            topic_mappings: vec![TopicMapping {
-                topic: "/default/vectors".to_string(),
+            routes: vec![TopicMapping {
+                from: "/default/vectors".to_string(),
                 subscription: "qdrant-sink-sub".to_string(),
                 subscription_type: SubscriptionType::Exclusive,
-                collection_name: "test_collection".to_string(),
+                to: "test_collection".to_string(),
                 vector_dimension: 1536,
                 distance: Distance::Cosine,
                 auto_create_collection: true,
                 include_danube_metadata: true,
                 expected_schema_subject: None,
-                batch_size: None,
-                batch_timeout_ms: None,
             }],
-            batch_size: 100,
-            batch_timeout_ms: 1000,
             timeout_secs: 30,
         };
 
@@ -304,7 +256,7 @@ mod tests {
 
         // Test empty topic mappings
         config.url = "http://localhost:6334".to_string();
-        config.topic_mappings = vec![];
+        config.routes = vec![];
         assert!(config.validate().is_err());
     }
 

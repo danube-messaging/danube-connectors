@@ -32,9 +32,9 @@ include_metadata = true
 # =============================================================================
 
 # 1. Structured sensor data with JSON Schema validation
-[[mqtt.topic_mappings]]
-mqtt_topic = "sensors/#"
-danube_topic = "/iot/sensors"
+[[mqtt.routes]]
+from = "sensors/#"
+to = "/iot/sensors"
 qos = "AtLeastOnce"
 partitions = 8
 
@@ -47,9 +47,9 @@ auto_register = true
 version_strategy = "latest"
 
 # 2. Device status with JSON Schema validation
-[[mqtt.topic_mappings]]
-mqtt_topic = "devices/+/status"
-danube_topic = "/iot/status"
+[[mqtt.routes]]
+from = "devices/+/status"
+to = "/iot/status"
 qos = "AtLeastOnce"
 partitions = 4
 
@@ -62,9 +62,9 @@ auto_register = true
 version_strategy = "latest"
 
 # 3. Device logs as plain text (string schema, empty schema_file)
-[[mqtt.topic_mappings]]
-mqtt_topic = "devices/+/logs"
-danube_topic = "/iot/logs"
+[[mqtt.routes]]
+from = "devices/+/logs"
+to = "/iot/logs"
 qos = "AtMostOnce"
 partitions = 1
 
@@ -77,9 +77,9 @@ auto_register = true
 version_strategy = "latest"
 
 # 4. Binary telemetry data (bytes schema, empty schema_file)
-[[mqtt.topic_mappings]]
-mqtt_topic = "devices/+/binary"
-danube_topic = "/iot/binary"
+[[mqtt.routes]]
+from = "devices/+/binary"
+to = "/iot/binary"
 qos = "AtLeastOnce"
 partitions = 4
 
@@ -92,9 +92,9 @@ auto_register = true
 version_strategy = "latest"
 
 # 5. Numeric metrics (number schema, empty schema_file)
-[[mqtt.topic_mappings]]
-mqtt_topic = "metrics/+"
-danube_topic = "/iot/metrics"
+[[mqtt.routes]]
+from = "metrics/+"
+to = "/iot/metrics"
 qos = "AtLeastOnce"
 partitions = 2
 
@@ -107,9 +107,9 @@ auto_register = true
 version_strategy = "latest"
 
 # 6. Debug messages WITHOUT schema validation (backward compatible)
-[[mqtt.topic_mappings]]
-mqtt_topic = "debug/#"
-danube_topic = "/iot/debug"
+[[mqtt.routes]]
+from = "debug/#"
+to = "/iot/debug"
 qos = "AtMostOnce"
 partitions = 1
 # No [[schemas]] entry = no validation, works as before

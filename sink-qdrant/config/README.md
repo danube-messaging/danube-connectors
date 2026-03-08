@@ -22,11 +22,11 @@ danube_service_url = "http://localhost:6650"
 [qdrant]
 url = "http://localhost:6334"
 
-# Topic mapping
-[[qdrant.topic_mappings]]
-topic = "/default/vectors"
+# Route
+[[qdrant.routes]]
+from = "/default/vectors"
 subscription = "qdrant-sink-sub"
-collection_name = "vectors"
+to = "vectors"
 vector_dimension = 384
 distance = "Cosine"
 auto_create_collection = true
@@ -79,26 +79,28 @@ timeout_secs = 30
 
 **Environment overrides:** `QDRANT_URL`, `QDRANT_API_KEY`
 
-### Batching
+### Runtime Processing
 
 ```toml
-[qdrant]
-batch_size = 50             # Points per batch
-batch_timeout_ms = 1000     # Max wait time
+[processing]
+batch_size = 100
+batch_timeout_ms = 1000
 ```
+
+Batching is managed by `danube-connect-core` at runtime, not by the Qdrant adapter.
 
 ---
 
-## Topic Mappings
+## Routes
 
 ### Required Fields
 
 ```toml
-[[qdrant.topic_mappings]]
-topic = "/default/vectors"              # Danube topic (/{namespace}/{name})
+[[qdrant.routes]]
+from = "/default/vectors"               # Danube topic (/{namespace}/{name})
 subscription = "qdrant-sink-sub"       # Consumer group name
 subscription_type = "Exclusive"        # "Exclusive", "Shared", or "FailOver"
-collection_name = "vectors"            # Qdrant collection
+to = "vectors"                         # Qdrant collection
 vector_dimension = 384                 # Vector size (must match embeddings)
 distance = "Cosine"                    # "Cosine", "Euclid", "Dot", "Manhattan"
 auto_create_collection = true         # Create collection if missing
@@ -118,21 +120,12 @@ include_danube_metadata = true        # Add _danube_* fields to payload
 ### Schema Validation (Optional)
 
 ```toml
-[[qdrant.topic_mappings]]
+[[qdrant.routes]]
 # ... other fields ...
 expected_schema_subject = "embeddings-v1"  # Registered schema name
 ```
 
 Enables automatic validation and deserialization by the runtime.
-
-### Per-Topic Overrides (Optional)
-
-```toml
-[[qdrant.topic_mappings]]
-# ... other fields ...
-batch_size = 100           # Override global batch_size
-batch_timeout_ms = 500     # Override global timeout
-```
 
 ---
 
@@ -159,28 +152,27 @@ QDRANT_API_KEY=your-api-key                    # Qdrant API key (secret)
 
 ```toml
 # Multiple topics → different collections
-[[qdrant.topic_mappings]]
-topic = "/default/chat_embeddings"
-collection_name = "chat_vectors"
+# Runtime batching comes from the shared [processing] section.
+[[qdrant.routes]]
+from = "/default/chat_embeddings"
+subscription = "qdrant-chat-sub"
+to = "chat_vectors"
 vector_dimension = 384
 distance = "Cosine"
-batch_size = 25                    # Smaller batches
-batch_timeout_ms = 500             # Low latency
 
-[[qdrant.topic_mappings]]
-topic = "/default/wiki_embeddings"
-collection_name = "wiki_knowledge"
+[[qdrant.routes]]
+from = "/default/wiki_embeddings"
+subscription = "qdrant-wiki-sub"
+to = "wiki_knowledge"
 vector_dimension = 768
 distance = "Cosine"
-# Uses global defaults
 
-[[qdrant.topic_mappings]]
-topic = "/default/code_embeddings"
-collection_name = "code_search"
+[[qdrant.routes]]
+from = "/default/code_embeddings"
+subscription = "qdrant-code-sub"
+to = "code_search"
 vector_dimension = 1536
 distance = "Cosine"
-batch_size = 200                   # Larger batches
-batch_timeout_ms = 2000            # High throughput
 ```
 
 ---

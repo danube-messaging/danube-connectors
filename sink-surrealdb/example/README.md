@@ -224,14 +224,14 @@ Messages are validated against `events-schema.json`:
 
 ### Single Topic Configuration
 
-The example uses a single topic mapping in `connector.toml`:
+The example uses a single route in `connector.toml`:
 
 ```toml
-[[surrealdb.topic_mappings]]
-topic = "/default/events"
+[[surrealdb.routes]]
+from = "/default/events"
 subscription = "surrealdb-sink-sub"
 subscription_type = "Shared"            # Load balancing
-table_name = "events"
+to = "events"
 expected_schema_subject = "events-v1"  # Schema validation
 storage_mode = "Document"
 include_danube_metadata = true
@@ -239,35 +239,33 @@ include_danube_metadata = true
 
 ### Multi-Topic Configuration
 
-To route multiple Danube topics to different SurrealDB tables, add more mappings:
+To route multiple Danube topics to different SurrealDB tables, add more routes:
 
 ```toml
 # User events → users table (with schema validation)
-[[surrealdb.topic_mappings]]
-topic = "/default/users"
+[[surrealdb.routes]]
+from = "/default/users"
 subscription = "surrealdb-users"
 subscription_type = "Shared"
-table_name = "users"
+to = "users"
 expected_schema_subject = "users-v1"  # Validate against users schema
 storage_mode = "Document"
 
 # IoT sensor data → temperature table (time-series with schema)
-[[surrealdb.topic_mappings]]
-topic = "/iot/temperature"
+[[surrealdb.routes]]
+from = "/iot/temperature"
 subscription = "surrealdb-iot"
 subscription_type = "Shared"
-table_name = "temperature_readings"
+to = "temperature_readings"
 expected_schema_subject = "sensor-v1"  # Validate sensor data
 storage_mode = "TimeSeries"  # Adds _timestamp field
-batch_size = 500
-flush_interval_ms = 2000
 
 # Logs → logs table (no schema validation for flexibility)
-[[surrealdb.topic_mappings]]
-topic = "/logs/application"
+[[surrealdb.routes]]
+from = "/logs/application"
 subscription = "surrealdb-logs"
 subscription_type = "Exclusive"
-table_name = "app_logs"
+to = "app_logs"
 # expected_schema_subject not set - accepts any data
 storage_mode = "Document"
 ```
@@ -437,7 +435,7 @@ curl -X POST http://localhost:8000/sql \
 # If zero, resend data:
 ./test_producer.sh
 
-# Wait for batch flush (default: 1 second)
+# Wait for runtime processing (default batch timeout from [processing])
 sleep 2
 
 # Try query again
@@ -474,38 +472,22 @@ docker-compose logs surrealdb-sink | grep "Flushing"
 
 ## Performance Tips
 
-### Optimize Batch Size
+### Tune Runtime Processing
 
 For high throughput:
 
 ```toml
+[processing]
 batch_size = 500
-flush_interval_ms = 5000
+batch_timeout_ms = 5000
 ```
 
 For low latency:
 
 ```toml
+[processing]
 batch_size = 10
-flush_interval_ms = 100
-```
-
-### Per-Topic Optimization
-
-```toml
-# High-volume topic
-[[surrealdb.topic_mappings]]
-topic = "/logs/application"
-table_name = "logs"
-batch_size = 1000
-flush_interval_ms = 10000
-
-# Real-time topic
-[[surrealdb.topic_mappings]]
-topic = "/alerts/critical"
-table_name = "alerts"
-batch_size = 1
-flush_interval_ms = 0
+batch_timeout_ms = 100
 ```
 
 ## Cleanup

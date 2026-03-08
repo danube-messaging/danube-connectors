@@ -175,10 +175,10 @@ chmod +x search_vectors.py
 
 **Single Topic with Schema Validation:** `connector.toml`
 ```toml
-[[qdrant.topic_mappings]]
-topic = "/default/vectors"
+[[qdrant.routes]]
+from = "/default/vectors"
 subscription = "qdrant-sink-sub"
-collection_name = "vectors"
+to = "vectors"
 vector_dimension = 384
 distance = "Cosine"
 auto_create_collection = true
@@ -191,21 +191,23 @@ expected_schema_subject = "embeddings-v1"
 **Multi-Topic:** `connector-multi-topic.toml`
 ```toml
 # Route different topics to different collections
-[[qdrant.topic_mappings]]
-topic = "/default/chat_embeddings"
-collection_name = "chat_vectors"
+[[qdrant.routes]]
+from = "/default/chat_embeddings"
+subscription = "qdrant-chat-sub"
+to = "chat_vectors"
 vector_dimension = 384
 
-[[qdrant.topic_mappings]]
-topic = "/default/wiki_embeddings"
-collection_name = "wiki_knowledge"
+[[qdrant.routes]]
+from = "/default/wiki_embeddings"
+subscription = "qdrant-wiki-sub"
+to = "wiki_knowledge"
 vector_dimension = 768
 
-[[qdrant.topic_mappings]]
-topic = "/default/code_embeddings"
-collection_name = "code_search"
+[[qdrant.routes]]
+from = "/default/code_embeddings"
+subscription = "qdrant-code-sub"
+to = "code_search"
 vector_dimension = 1536
-batch_size = 200  # Per-topic override
 ```
 
 To use:
@@ -318,7 +320,7 @@ docker-compose logs qdrant-sink
 ./generate_embeddings.py --count 10
 ./test_producer.sh
 
-# Wait a few seconds for batch flush
+# Wait a few seconds for runtime processing
 sleep 3
 
 # Try search again
@@ -348,22 +350,22 @@ docker-compose logs qdrant-sink | grep "collection"
 
 ## Performance Tips
 
-### Optimize Batch Size
+### Tune Runtime Processing
 
 For high throughput:
 
-```yaml
-environment:
-  - QDRANT_BATCH_SIZE=200        # Larger batches
-  - QDRANT_BATCH_TIMEOUT_MS=5000 # Less frequent flushes
+```toml
+[processing]
+batch_size = 200
+batch_timeout_ms = 5000
 ```
 
 For low latency:
 
-```yaml
-environment:
-  - QDRANT_BATCH_SIZE=10         # Smaller batches
-  - QDRANT_BATCH_TIMEOUT_MS=100  # Frequent flushes
+```toml
+[processing]
+batch_size = 10
+batch_timeout_ms = 100
 ```
 
 ## Cleanup

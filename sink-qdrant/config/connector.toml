@@ -55,13 +55,6 @@ url = "http://localhost:6334"
 # Required only for Qdrant Cloud deployments
 # api_key = "your-qdrant-cloud-api-key"
 
-# Global batch settings - apply to all topics unless overridden
-# Batch size: number of points to accumulate before flushing
-batch_size = 50
-
-# Batch timeout: maximum time (ms) to wait before flushing
-batch_timeout_ms = 1000
-
 # Timeout for Qdrant operations (seconds)
 timeout_secs = 30
 
@@ -69,11 +62,11 @@ timeout_secs = 30
 # TOPIC MAPPING: Danube Topic → Qdrant Collection
 # ============================================================================
 
-[[qdrant.topic_mappings]]
+[[qdrant.routes]]
 # Danube topic to consume from
 # Format: /{namespace}/{topic_name} (exactly 2 segments)
 # Examples: /default/vectors, /production/embeddings, /chat/messages
-topic = "/default/vectors"
+from = "/default/vectors"
 
 # Subscription name for consumer group
 # Use different subscriptions to create multiple independent consumers
@@ -86,7 +79,7 @@ subscription = "qdrant-sink-sub"
 subscription_type = "Exclusive"
 
 # Target Qdrant collection name
-collection_name = "vectors"
+to = "vectors"
 
 # Vector dimension - REQUIRED for two critical reasons:
 # 1. Early Validation: Validates vector dimensions BEFORE sending to Qdrant
@@ -137,11 +130,6 @@ include_danube_metadata = true
 # Schema must be registered in Danube Schema Registry before starting
 # expected_schema_subject = "embeddings-v1"
 
-# Per-topic batch overrides (optional)
-# Uncomment to override global batch_size and batch_timeout_ms for this topic
-# batch_size = 100
-# batch_timeout_ms = 500
-
 # ============================================================================
 # USAGE & ENVIRONMENT VARIABLES
 # ============================================================================
@@ -151,7 +139,7 @@ include_danube_metadata = true
 #
 # Environment Variable Overrides:
 # Only secrets and connection URLs can be overridden with environment variables.
-# All structural configuration (topic mappings, dimensions, batch sizes, etc.)
+# All structural configuration (routes, dimensions, schema expectations, etc.)
 # must be in this TOML file.
 #
 # Supported Environment Variables:
@@ -162,7 +150,7 @@ include_danube_metadata = true
 #   QDRANT_API_KEY=your-api-key               # Optional: secret (don't put in TOML)
 #
 # NOT Supported via Environment Variables:
-#   - Topic mappings (must be in TOML)
+#   - Routes (must be in TOML)
 #   - Collection names, dimensions, distance metrics (must be in TOML)
 #   - Batch sizes and timeouts (must be in TOML)
 #   - Retry settings (must be in TOML)
@@ -170,7 +158,7 @@ include_danube_metadata = true
 #
 # Multi-Topic Configuration:
 # To route multiple Danube topics to different Qdrant collections,
-# add additional [[qdrant.topic_mappings]] sections.
+# add additional [[qdrant.routes]] sections.
 # See connector-multi-topic.toml for examples.
 #
 # Message Format:

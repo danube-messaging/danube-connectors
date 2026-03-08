@@ -32,19 +32,19 @@ async fn main() -> ConnectorResult<()> {
         connector_name = %webhook_config.core.connector_name,
         danube_url = %webhook_config.core.danube_service_url,
         server_addr = %webhook_config.bind_address(),
-        endpoints = webhook_config.endpoints.len(),
+        routes = webhook_config.routes.len(),
         schemas = webhook_config.core.schemas.len(),
         "Configuration loaded successfully"
     );
 
     // Log endpoint configuration
-    for endpoint in &webhook_config.endpoints {
+    for endpoint in &webhook_config.routes {
         tracing::info!(
-            path = %endpoint.path,
-            topic = %endpoint.danube_topic,
+            path = %endpoint.from,
+            topic = %endpoint.to,
             partitions = endpoint.partitions,
             reliable_dispatch = endpoint.reliable_dispatch,
-            "Configured endpoint"
+            "Configured route"
         );
     }
 

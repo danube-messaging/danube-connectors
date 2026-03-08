@@ -36,14 +36,14 @@ max_body_size = 1048576
 type = "none"
 
 # Endpoint 1: Generic webhooks (no schema validation)
-[[endpoints]]
-path = "/webhooks/generic"
-danube_topic = "/webhooks/events"
+[[routes]]
+from = "/webhooks/generic"
+to = "/webhooks/events"
 partitions = 2
 reliable_dispatch = false
 
 # Endpoint 2: Critical webhooks (no schema validation)
-[[endpoints]]
-path = "/webhooks/critical"
-danube_topic = "/webhooks/critical"
+[[routes]]
+from = "/webhooks/critical"
+to = "/webhooks/critical"
 reliable_dispatch = true

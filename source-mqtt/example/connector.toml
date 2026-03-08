@@ -79,44 +79,44 @@ include_metadata = true
 #   - QoS 0 (AtMostOnce)  → reliable_dispatch defaults to false
 #   - QoS 1 (AtLeastOnce) → reliable_dispatch defaults to true
 #   - QoS 2 (ExactlyOnce) → reliable_dispatch defaults to true
-# ============================================================================
+# ==========================================================================
 
 # Example 1: High-volume sensor data from zone1 (partitioned for scale)
-[[mqtt.topic_mappings]]
-mqtt_topic = "sensors/+/zone1"
-danube_topic = "/iot/sensors_zone1"  # Format: /{namespace}/{topic_name}
+[[mqtt.routes]]
+from = "sensors/+/zone1"
+to = "/iot/sensors_zone1"  # Format: /{namespace}/{topic_name}
 qos = "AtLeastOnce"  # QoS 1 - will use reliable dispatch
 partitions = 4       # Partitioned topic for high throughput
 # reliable_dispatch is automatically true for QoS 1 (can override if needed)
 
 # Example 2: Device telemetry (partitioned, reliable)
-[[mqtt.topic_mappings]]
-mqtt_topic = "devices/+/telemetry"
-danube_topic = "/iot/device_telemetry"  # Format: /{namespace}/{topic_name}
+[[mqtt.routes]]
+from = "devices/+/telemetry"
+to = "/iot/device_telemetry"  # Format: /{namespace}/{topic_name}
 qos = "AtLeastOnce"  # QoS 1
 partitions = 2
 # reliable_dispatch defaults to true for QoS 1
 
 # Example 3: Temperature data (non-partitioned, reliable)
-[[mqtt.topic_mappings]]
-mqtt_topic = "sensors/temp/#"
-danube_topic = "/iot/temperature"
+[[mqtt.routes]]
+from = "sensors/temp/#"
+to = "/iot/temperature"
 qos = "AtLeastOnce"  # QoS 1
 partitions = 0       # Non-partitioned topic
 # reliable_dispatch defaults to true for QoS 1
 
 # Example 4: Low-priority debug logs (non-reliable, fast)
-[[mqtt.topic_mappings]]
-mqtt_topic = "debug/#"
-danube_topic = "/iot/debug"
+[[mqtt.routes]]
+from = "debug/#"
+to = "/iot/debug"
 qos = "AtMostOnce"           # QoS 0 - fire and forget
 partitions = 0               # Non-partitioned
 # reliable_dispatch defaults to false for QoS 0
 
 # Example 5: Critical alarms (reliable, non-partitioned for ordering)
-# [[mqtt.topic_mappings]]
-# mqtt_topic = "alarms/critical/#"
-# danube_topic = "/iot/alarms"
+# [[mqtt.routes]]
+# from = "alarms/critical/#"
+# to = "/iot/alarms"
 # qos = "ExactlyOnce"  # QoS 2
 # partitions = 0       # Non-partitioned to preserve strict ordering
 # reliable_dispatch = true

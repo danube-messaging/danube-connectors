@@ -253,10 +253,8 @@ For each one:
 
 After the first wave, codify:
 
-- adapter crate template
 - route naming conventions
 - minimal example format
-- migration checklist for future connectors
 
 ## Success Criteria
 

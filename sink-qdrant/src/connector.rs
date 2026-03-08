@@ -57,9 +57,7 @@ impl QdrantSinkConnector {
             config: QdrantConfig {
                 url: String::new(),
                 api_key: None,
-                topic_mappings: vec![],
-                batch_size: 100,
-                batch_timeout_ms: 1000,
+                routes: vec![],
                 timeout_secs: 30,
             },
             client: None,
@@ -90,13 +88,13 @@ impl QdrantSinkConnector {
 
         info!(
             "Flushing batch of {} points to Qdrant collection '{}' (topic: {})",
-            count, context.mapping.collection_name, topic
+            count, context.mapping.to, topic
         );
 
         // Upsert points to Qdrant
         client
             .upsert_points(UpsertPointsBuilder::new(
-                &context.mapping.collection_name,
+                &context.mapping.to,
                 points_to_insert,
             ))
             .await
@@ -109,10 +107,7 @@ impl QdrantSinkConnector {
 
         info!(
             "Successfully inserted {} points to '{}' (total: {}, batches: {})",
-            count,
-            context.mapping.collection_name,
-            context.points_inserted,
-            context.batches_flushed
+            count, context.mapping.to, context.points_inserted, context.batches_flushed
         );
 
         Ok(())
@@ -131,15 +126,12 @@ impl QdrantSinkConnector {
             .await
             .map_err(|e| ConnectorError::fatal(format!("Failed to list collections: {}", e)))?;
 
-        let collection_exists = collections
-            .collections
-            .iter()
-            .any(|c| c.name == mapping.collection_name);
+        let collection_exists = collections.collections.iter().any(|c| c.name == mapping.to);
 
         if collection_exists {
             info!(
                 "Collection '{}' already exists (topic: {})",
-                mapping.collection_name, mapping.topic
+                mapping.to, mapping.from
             );
             return Ok(());
         }
@@ -147,14 +139,14 @@ impl QdrantSinkConnector {
         if !mapping.auto_create_collection {
             return Err(ConnectorError::fatal(format!(
                 "Collection '{}' does not exist and auto_create_collection is disabled",
-                mapping.collection_name
+                mapping.to
             )));
         }
 
         // Create collection
         info!(
             "Creating collection '{}' with dimension {} and distance metric {:?} (topic: {})",
-            mapping.collection_name, mapping.vector_dimension, mapping.distance, mapping.topic
+            mapping.to, mapping.vector_dimension, mapping.distance, mapping.from
         );
 
         let vectors_config = qdrant_client::qdrant::VectorParamsBuilder::new(
@@ -165,21 +157,17 @@ impl QdrantSinkConnector {
 
         client
             .create_collection(
-                CreateCollectionBuilder::new(&mapping.collection_name)
-                    .vectors_config(vectors_config),
+                CreateCollectionBuilder::new(&mapping.to).vectors_config(vectors_config),
             )
             .await
             .map_err(|e| {
                 ConnectorError::fatal(format!(
                     "Failed to create collection '{}': {}",
-                    mapping.collection_name, e
+                    mapping.to, e
                 ))
             })?;
 
-        info!(
-            "Collection '{}' created successfully",
-            mapping.collection_name
-        );
+        info!("Collection '{}' created successfully", mapping.to);
 
         Ok(())
     }
@@ -200,9 +188,9 @@ impl SinkConnector for QdrantSinkConnector {
         self.config.validate()?;
 
         info!(
-            "Qdrant Configuration: url={}, {} topic mapping(s)",
+            "Qdrant Configuration: url={}, {} route(s)",
             self.config.url,
-            self.config.topic_mappings.len()
+            self.config.routes.len()
         );
 
         // Create Qdrant client
@@ -221,10 +209,10 @@ impl SinkConnector for QdrantSinkConnector {
         self.client = Some(client);
 
         // Initialize collection contexts for each topic mapping
-        for mapping in &self.config.topic_mappings {
+        for mapping in &self.config.routes {
             info!(
                 "Initializing collection '{}' for topic '{}' (dimension={}, distance={:?})",
-                mapping.collection_name, mapping.topic, mapping.vector_dimension, mapping.distance
+                mapping.to, mapping.from, mapping.vector_dimension, mapping.distance
             );
 
             // Ensure collection exists
@@ -233,7 +221,7 @@ impl SinkConnector for QdrantSinkConnector {
             // Create collection context
             let context = CollectionContext::new(mapping.clone());
 
-            self.collections.insert(mapping.topic.clone(), context);
+            self.collections.insert(mapping.from.clone(), context);
         }
 
         info!(
@@ -247,11 +235,11 @@ impl SinkConnector for QdrantSinkConnector {
         // Return consumer config for each topic mapping
         let configs = self
             .config
-            .topic_mappings
+            .routes
             .iter()
             .map(|mapping| ConsumerConfig {
-                topic: mapping.topic.clone(),
-                consumer_name: format!("qdrant-sink-{}", mapping.collection_name),
+                topic: mapping.from.clone(),
+                consumer_name: format!("qdrant-sink-{}", mapping.to),
                 subscription: mapping.subscription.clone(),
                 subscription_type: mapping.subscription_type.clone(),
                 // Use schema subject from mapping if specified
@@ -285,7 +273,7 @@ impl SinkConnector for QdrantSinkConnector {
             debug!(
                 "Transformed message from topic {} into Qdrant point for collection '{}'",
                 record.topic(),
-                context.mapping.collection_name
+                context.mapping.to
             );
 
             batches.entry(topic).or_default().push(point);
@@ -308,10 +296,7 @@ impl SinkConnector for QdrantSinkConnector {
         for (topic, context) in &self.collections {
             info!(
                 "Collection '{}' (topic: {}): {} points inserted, {} batches flushed",
-                context.mapping.collection_name,
-                topic,
-                context.points_inserted,
-                context.batches_flushed
+                context.mapping.to, topic, context.points_inserted, context.batches_flushed
             );
             total_points += context.points_inserted;
             total_batches += context.batches_flushed;
@@ -357,63 +342,22 @@ mod tests {
     #[test]
     fn test_collection_context_creation() {
         let mapping = TopicMapping {
-            topic: "/default/test".to_string(),
+            from: "/default/test".to_string(),
             subscription: "test-sub".to_string(),
             subscription_type: SubscriptionType::Exclusive,
-            collection_name: "test_collection".to_string(),
+            to: "test_collection".to_string(),
             vector_dimension: 384,
             distance: Distance::Cosine,
             auto_create_collection: true,
             include_danube_metadata: true,
             expected_schema_subject: None,
-            batch_size: Some(3),
-            batch_timeout_ms: None,
         };
 
         let context = CollectionContext::new(mapping.clone());
 
-        assert_eq!(context.mapping.topic, mapping.topic);
-        assert_eq!(context.mapping.collection_name, mapping.collection_name);
+        assert_eq!(context.mapping.from, mapping.from);
+        assert_eq!(context.mapping.to, mapping.to);
         assert_eq!(context.points_inserted, 0);
         assert_eq!(context.batches_flushed, 0);
-    }
-
-    #[test]
-    fn test_topic_mapping_effective_values() {
-        let mapping = TopicMapping {
-            topic: "/default/test".to_string(),
-            subscription: "test-sub".to_string(),
-            subscription_type: SubscriptionType::Exclusive,
-            collection_name: "test_collection".to_string(),
-            vector_dimension: 384,
-            distance: Distance::Cosine,
-            auto_create_collection: true,
-            include_danube_metadata: true,
-            expected_schema_subject: None,
-            batch_size: Some(50),
-            batch_timeout_ms: Some(500),
-        };
-
-        // Uses topic-specific values
-        assert_eq!(mapping.effective_batch_size(100), 50);
-        assert_eq!(mapping.effective_batch_timeout(1000), 500);
-
-        let mapping_defaults = TopicMapping {
-            topic: "/default/test2".to_string(),
-            subscription: "test-sub2".to_string(),
-            subscription_type: SubscriptionType::Exclusive,
-            collection_name: "test_collection2".to_string(),
-            vector_dimension: 768,
-            distance: Distance::Euclid,
-            auto_create_collection: true,
-            include_danube_metadata: false,
-            expected_schema_subject: None,
-            batch_size: None,
-            batch_timeout_ms: None,
-        };
-
-        // Uses global values
-        assert_eq!(mapping_defaults.effective_batch_size(100), 100);
-        assert_eq!(mapping_defaults.effective_batch_timeout(1000), 1000);
     }
 }

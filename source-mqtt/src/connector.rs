@@ -45,7 +45,7 @@ impl MqttSourceConnector {
                 keep_alive_secs: 60,
                 connection_timeout_secs: 30,
                 max_packet_size: 10 * 1024 * 1024,
-                topic_mappings: vec![],
+                routes: vec![],
                 clean_session: true,
                 include_metadata: true,
                 tcp_nodelay: true,
@@ -199,7 +199,7 @@ impl MqttSourceConnector {
             }
         };
 
-        let mut record = SourceRecord::new(&mapping.danube_topic, payload_value);
+        let mut record = SourceRecord::new(&mapping.to, payload_value);
 
         // Add MQTT metadata as attributes
         if include_metadata {
@@ -220,12 +220,12 @@ impl MqttSourceConnector {
     /// Find the matching topic mapping for an MQTT topic
     fn find_mapping_static<'a>(
         mqtt_topic: &str,
-        topic_mappings: &'a [TopicMapping],
+        routes: &'a [TopicMapping],
     ) -> Option<&'a TopicMapping> {
         // Find first matching mapping (exact or wildcard)
-        topic_mappings.iter().find(|mapping| {
+        routes.iter().find(|mapping| {
             // Exact match or wildcard match
-            mapping.mqtt_topic == mqtt_topic || Self::topic_matches(&mapping.mqtt_topic, mqtt_topic)
+            mapping.from == mqtt_topic || Self::topic_matches(&mapping.from, mqtt_topic)
         })
     }
 
@@ -266,15 +266,15 @@ impl SourceConnector for MqttSourceConnector {
             self.config.broker_host,
             self.config.broker_port,
             self.config.client_id,
-            self.config.topic_mappings.len()
+            self.config.routes.len()
         );
 
         // Log topic mappings
-        for mapping in &self.config.topic_mappings {
+        for mapping in &self.config.routes {
             info!(
                 "Topic mapping: {} -> {} (QoS: {:?}, Partitions: {}, Reliable: {})",
-                mapping.mqtt_topic,
-                mapping.danube_topic,
+                mapping.from,
+                mapping.to,
                 mapping.qos,
                 mapping.partitions,
                 mapping.effective_reliable_dispatch()
@@ -303,18 +303,18 @@ impl SourceConnector for MqttSourceConnector {
         event_loop.network_options = self.config.network_options();
 
         // Subscribe to MQTT topics
-        for mapping in &self.config.topic_mappings {
+        for mapping in &self.config.routes {
             info!(
                 "Subscribing to MQTT topic: {} (QoS: {:?})",
-                mapping.mqtt_topic, mapping.qos
+                mapping.from, mapping.qos
             );
 
             client
-                .subscribe(&mapping.mqtt_topic, mapping.qos.into())
+                .subscribe(&mapping.from, mapping.qos.into())
                 .await
                 .map_err(|e| {
                     ConnectorError::fatal_with_source(
-                        format!("Failed to subscribe to topic: {}", mapping.mqtt_topic),
+                        format!("Failed to subscribe to topic: {}", mapping.from),
                         e,
                     )
                 })?;
@@ -324,7 +324,7 @@ impl SourceConnector for MqttSourceConnector {
         let event_loop_handle = Self::spawn_event_loop(
             event_loop,
             sender,
-            self.config.topic_mappings.clone(),
+            self.config.routes.clone(),
             self.config.include_metadata,
         );
 
@@ -340,14 +340,14 @@ impl SourceConnector for MqttSourceConnector {
         // and create producer configurations for each
         let producer_configs: Vec<_> = self
             .config
-            .topic_mappings
+            .routes
             .iter()
             .map(|mapping| {
                 // Find matching schema configuration for this Danube topic
-                let schema_config = self.find_schema_config(&mapping.danube_topic);
+                let schema_config = self.find_schema_config(&mapping.to);
 
                 ProducerConfig {
-                    topic: mapping.danube_topic.clone(),
+                    topic: mapping.to.clone(),
                     partitions: mapping.partitions,
                     reliable_dispatch: mapping.effective_reliable_dispatch(),
                     schema_config,
@@ -357,7 +357,7 @@ impl SourceConnector for MqttSourceConnector {
 
         if producer_configs.is_empty() {
             return Err(ConnectorError::config(
-                "No topic mappings configured. Please add topic mappings in the configuration.",
+                "No routes configured. Please add routes in the configuration.",
             ));
         }
 

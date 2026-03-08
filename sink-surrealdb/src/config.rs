@@ -62,24 +62,16 @@ pub struct SurrealDBConfig {
     #[serde(default = "default_request_timeout")]
     pub request_timeout_secs: u64,
 
-    /// Topic mappings: Danube topics → SurrealDB tables
+    /// Routes: Danube topics → SurrealDB tables
     #[serde(default)]
-    pub topic_mappings: Vec<TopicMapping>,
-
-    /// Global batch size (can be overridden per topic)
-    #[serde(default = "default_batch_size")]
-    pub batch_size: usize,
-
-    /// Global flush interval in milliseconds
-    #[serde(default = "default_flush_interval_ms")]
-    pub flush_interval_ms: u64,
+    pub routes: Vec<TopicMapping>,
 }
 
 /// Mapping from a Danube topic to a SurrealDB table
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TopicMapping {
     /// Danube topic to consume from
-    pub topic: String,
+    pub from: String,
 
     /// Danube subscription name
     pub subscription: String,
@@ -89,7 +81,7 @@ pub struct TopicMapping {
     pub subscription_type: SubscriptionType,
 
     /// SurrealDB table name to insert into
-    pub table_name: String,
+    pub to: String,
 
     /// Include Danube metadata in records (topic, offset, timestamp)
     #[serde(default = "default_include_metadata")]
@@ -100,14 +92,6 @@ pub struct TopicMapping {
     /// Schema must be registered in Danube Schema Registry
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expected_schema_subject: Option<String>,
-
-    /// Custom batch size for this topic (overrides global)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub batch_size: Option<usize>,
-
-    /// Custom flush interval for this topic (overrides global)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub flush_interval_ms: Option<u64>,
 
     /// Storage mode: Document or TimeSeries
     #[serde(default)]
@@ -121,14 +105,6 @@ fn default_connection_timeout() -> u64 {
 
 fn default_request_timeout() -> u64 {
     30
-}
-
-fn default_batch_size() -> usize {
-    100
-}
-
-fn default_flush_interval_ms() -> u64 {
-    1000
 }
 
 fn default_include_metadata() -> bool {
@@ -209,21 +185,19 @@ impl ConfigValidate for SurrealDBSinkConfig {
         }
 
         // Validate topic mappings
-        if self.surrealdb.topic_mappings.is_empty() {
-            return Err(ConnectorError::config(
-                "At least one topic mapping is required",
-            ));
+        if self.surrealdb.routes.is_empty() {
+            return Err(ConnectorError::config("At least one route is required"));
         }
 
-        for mapping in &self.surrealdb.topic_mappings {
-            if mapping.topic.is_empty() {
-                return Err(ConnectorError::config("Topic name cannot be empty"));
+        for mapping in &self.surrealdb.routes {
+            if mapping.from.is_empty() {
+                return Err(ConnectorError::config("Route 'from' cannot be empty"));
             }
             if mapping.subscription.is_empty() {
                 return Err(ConnectorError::config("Subscription name cannot be empty"));
             }
-            if mapping.table_name.is_empty() {
-                return Err(ConnectorError::config("Table name cannot be empty"));
+            if mapping.to.is_empty() {
+                return Err(ConnectorError::config("Route 'to' cannot be empty"));
             }
             // storage_mode is an enum with default, so it's always valid
             // Just verify it's one of the expected values (Document or TimeSeries)
@@ -258,19 +232,15 @@ mod tests {
                 password: None,
                 connection_timeout_secs: 30,
                 request_timeout_secs: 30,
-                topic_mappings: vec![TopicMapping {
-                    topic: "/test/topic".to_string(),
+                routes: vec![TopicMapping {
+                    from: "/test/topic".to_string(),
                     subscription: "test-sub".to_string(),
                     subscription_type: SubscriptionType::Shared,
-                    table_name: "events".to_string(),
+                    to: "events".to_string(),
                     include_danube_metadata: true,
                     expected_schema_subject: None,
-                    batch_size: None,
-                    flush_interval_ms: None,
                     storage_mode: StorageMode::Document,
                 }],
-                batch_size: 100,
-                flush_interval_ms: 1000,
             },
         };
 
@@ -282,7 +252,7 @@ mod tests {
         config.surrealdb.url = "ws://localhost:8000".to_string();
 
         // Test empty topic mappings
-        config.surrealdb.topic_mappings.clear();
+        config.surrealdb.routes.clear();
         assert!(config.validate().is_err());
     }
 
@@ -304,32 +274,26 @@ mod tests {
                 password: None,
                 connection_timeout_secs: 30,
                 request_timeout_secs: 30,
-                topic_mappings: vec![
+                routes: vec![
                     TopicMapping {
-                        topic: "/test/document".to_string(),
+                        from: "/test/document".to_string(),
                         subscription: "test-doc".to_string(),
                         subscription_type: SubscriptionType::Shared,
-                        table_name: "documents".to_string(),
+                        to: "documents".to_string(),
                         include_danube_metadata: true,
                         expected_schema_subject: None,
-                        batch_size: None,
-                        flush_interval_ms: None,
                         storage_mode: StorageMode::Document,
                     },
                     TopicMapping {
-                        topic: "/test/timeseries".to_string(),
+                        from: "/test/timeseries".to_string(),
                         subscription: "test-ts".to_string(),
                         subscription_type: SubscriptionType::Shared,
-                        table_name: "timeseries".to_string(),
+                        to: "timeseries".to_string(),
                         include_danube_metadata: true,
                         expected_schema_subject: None,
-                        batch_size: None,
-                        flush_interval_ms: None,
                         storage_mode: StorageMode::TimeSeries,
                     },
                 ],
-                batch_size: 100,
-                flush_interval_ms: 1000,
             },
         };
 
@@ -339,8 +303,6 @@ mod tests {
 
     #[test]
     fn test_default_values() {
-        assert_eq!(default_batch_size(), 100);
-        assert_eq!(default_flush_interval_ms(), 1000);
         assert_eq!(default_connection_timeout(), 30);
         assert_eq!(default_request_timeout(), 30);
         assert!(default_include_metadata());
