@@ -8,7 +8,7 @@ This example shows how to:
 1. Run Danube broker, MinIO (S3-compatible storage), and the connector with Docker Compose
 2. Register JSON schemas with Danube Schema Registry
 3. Create topics with schema validation enabled
-4. Generate and validate sample events using danube-cli
+4. Generate and validate sample events using the Dockerized Python producer
 5. Automatically stream events to Delta Lake tables with type safety
 6. Query and analyze the data using Python or Spark
 
@@ -23,7 +23,7 @@ This example shows how to:
 ```
 ┌─────────────────┐
 │  Test Producer  │
-│  (danube-cli)   │
+│ (Docker Tools)  │
 └────────┬────────┘
          │ Events (JSON)
          ▼
@@ -85,35 +85,16 @@ Services:
 - **MinIO API**: `http://localhost:9000`
 - **MinIO Console**: `http://localhost:9001` (minioadmin/minioadmin)
 - **Connector Metrics**: `http://localhost:9090/metrics`
+- **Docker Tools Profile**: `test-producer`
 
-### 2. Install danube-cli
+### 2. Use the Dockerized Helper Tools
 
-Download the latest release for your system from [Danube Releases](https://github.com/danube-messaging/danube/releases):
+The example no longer requires local Python or `danube-cli` for the main workflow.
 
-```bash
-# Linux
-wget https://github.com/danube-messaging/danube/releases/download/v0.6.0/danube-cli-linux
-chmod +x danube-cli-linux
+On first use, Docker Compose builds a small Python tools image from `Dockerfile.tools` and reuses it for message production.
 
-# macOS (Apple Silicon)
-wget https://github.com/danube-messaging/danube/releases/download/v0.6.0/danube-cli-macos
-chmod +x danube-cli-macos
-
-# Windows
-# Download danube-cli-windows.exe from the releases page
-```
-
-**Note:** The `test_producer.sh` script automatically detects `danube-cli-linux`, `danube-cli-macos`, or `danube-cli` in the current directory.
-
-**Available platforms:**
-- Linux: `danube-cli-linux`
-- macOS (Apple Silicon): `danube-cli-macos`
-- Windows: `danube-cli-windows.exe`
-
-Or use the Docker image:
-```bash
-docker pull ghcr.io/danube-messaging/danube-cli:latest
-```
+When overriding helper connection settings, use the Docker service names inside the Compose network:
+- Danube: `http://danube-broker:6650`
 
 ### 3. Understand Schema Validation
 
@@ -150,32 +131,28 @@ field_mappings = [
 ```
 
 **Benefits:**
-- ✅ Messages are validated before being accepted
-- ✅ Type-safe deserialization (runtime provides `serde_json::Value`)
-- ✅ Schema evolution support
-- ✅ Automatic field extraction using JSON paths
+- Messages are validated before being accepted
+- Type-safe deserialization (runtime provides `serde_json::Value`)
+- Schema evolution support
+- Automatic field extraction using JSON paths
 
 ### 4. Send Test Data
 
 ```bash
 # Send 10 sample events
-./test_producer.sh
+docker-compose --profile tools run --rm test-producer
 
 # Send more events with custom settings
-COUNT=100 INTERVAL=100 ./test_producer.sh
+COUNT=100 INTERVAL=100 docker-compose --profile tools run --rm test-producer
 
-# Or use danube-cli directly with schema validation
-./danube-cli-linux produce \
-  --service-addr http://localhost:6650 \
-  --topic /default/events \
-  --message '{"event_type":"purchase","user_id":"user_001","product":"laptop","amount":999,"currency":"USD","timestamp":"2024-01-01T12:00:00Z"}' \
-  --schema-subject events-schema-v1 \
-  --reliable
+# Or send a custom message with schema validation
+COUNT=1 RAW_MESSAGE='{"event_type":"purchase","user_id":"user_001","product":"laptop","amount":999,"currency":"USD","timestamp":"2024-01-01T12:00:00Z"}' \
+docker-compose --profile tools run --rm test-producer
 ```
 
-**Note:** The `--schema-subject` flag enables automatic validation against the registered schema.
+**Note:** The Dockerized producer uses `events-schema-v1` by default, which enables automatic validation against the registered schema.
 
-The test script generates various event types:
+The producer generates various event types:
 - **user_signup** - New user registrations
 - **user_login** - User login events
 - **purchase** - E-commerce transactions
@@ -359,7 +336,7 @@ docker-compose logs topic-init
 docker-compose logs deltalake-sink | grep subscription
 
 # 4. Send test message
-./test_producer.sh
+docker-compose --profile tools run --rm test-producer
 ```
 
 ### Cannot Access MinIO Console

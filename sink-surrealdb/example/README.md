@@ -16,7 +16,7 @@ This example shows how to:
 ```
 ┌─────────────────┐
 │  Test Producer  │
-│  (danube-cli)   │
+│ (Docker Tools)  │
 └────────┬────────┘
          │ Events (JSON + Schema)
          ▼
@@ -76,53 +76,34 @@ Services:
 - **Danube Metrics**: `http://localhost:9040/metrics`
 - **SurrealDB HTTP/WS**: `http://localhost:8000`
 - **Connector Metrics**: `http://localhost:9090/metrics`
+- **Docker Tools Profile**: `test-producer`
 
-### 2. Install danube-cli (v0.6.1+)
+### 2. Use the Dockerized Helper Tools
 
-Download v0.6.1 or later for schema validation support from [Danube Releases](https://github.com/danube-messaging/danube/releases):
+The example no longer requires local Python or `danube-cli` for the main workflow.
 
-```bash
-# Linux
-wget https://github.com/danube-messaging/danube/releases/download/v0.6.1/danube-cli-linux
-chmod +x danube-cli-linux
+On first use, Docker Compose builds a small Python tools image from `Dockerfile.tools` and reuses it for message production.
 
-# macOS (Apple Silicon)
-wget https://github.com/danube-messaging/danube/releases/download/v0.6.1/danube-cli-macos
-chmod +x danube-cli-macos
-
-# Windows
-# Download danube-cli-windows.exe from the releases page
-```
-
-**Note:** The `test_producer.sh` script automatically detects `danube-cli-linux`, `danube-cli-macos`, or `danube-cli` in the current directory.
-
-**Available platforms:**
-- Linux: `danube-cli-linux`
-- macOS (Apple Silicon): `danube-cli-macos`
-- Windows: `danube-cli-windows.exe`
-
-Or use the Docker image:
-```bash
-docker pull ghcr.io/danube-messaging/danube-cli:latest
-```
+When overriding helper connection settings, use the Docker service names inside the Compose network:
+- Danube: `http://danube-broker:6650`
 
 ### 3. Send Test Data
 
 ```bash
 # Send 10 sample events
-./test_producer.sh
+docker-compose --profile tools run --rm test-producer
 
 # Send more events
-COUNT=50 ./test_producer.sh
+COUNT=50 docker-compose --profile tools run --rm test-producer
 
 # Custom configuration
-DANUBE_URL=http://localhost:6650 \
+DANUBE_URL=http://danube-broker:6650 \
 TOPIC=/default/events \
 COUNT=20 \
-./test_producer.sh
+docker-compose --profile tools run --rm test-producer
 ```
 
-The script generates various event types validated against the `events-v1` schema:
+The producer generates various event types validated against the `events-v1` schema:
 - **user_signup**: New user registrations
 - **user_login**: User login events
 - **purchase**: E-commerce transactions
@@ -187,7 +168,7 @@ curl -X POST http://localhost:8000/sql \
 ```
 
 
-## Schema Validation (v0.2.0)
+## Schema Validation
 
 ### Event Schema
 
@@ -211,7 +192,7 @@ Messages are validated against `events-schema.json`:
 
 1. **Schema Registration**: `topic-init` service registers `events-v1` schema
 2. **Topic Creation**: Topic created with `--schema-subject events-v1`
-3. **Producer Validation**: `danube-cli` validates messages before sending
+3. **Producer Validation**: The Dockerized Python producer references `events-v1` before sending
 4. **Runtime Validation**: Broker validates all messages
 5. **Automatic Deserialization**: Connector receives pre-validated, deserialized JSON
 
@@ -370,16 +351,12 @@ docker exec surrealdb-topic-init danube-admin-cli topics describe /default/event
 **Test schema validation:**
 ```bash
 # Valid message (passes validation)
-danube-cli produce --service-addr http://localhost:6650 \
-  --topic /default/events \
-  --schema-subject events-v1 \
-  --message '{"event_type":"test","timestamp":"2026-01-08T19:45:00Z"}'
+COUNT=1 RAW_MESSAGE='{"event_type":"test","timestamp":"2026-01-08T19:45:00Z"}' \
+docker-compose --profile tools run --rm test-producer
 
 # Invalid message (fails validation - missing required field)
-danube-cli produce --service-addr http://localhost:6650 \
-  --topic /default/events \
-  --schema-subject events-v1 \
-  --message '{"event_type":"test"}'  # Missing timestamp - will fail
+COUNT=1 RAW_MESSAGE='{"event_type":"test"}' \
+docker-compose --profile tools run --rm test-producer
 ```
 
 ## Troubleshooting
@@ -403,10 +380,8 @@ docker exec surrealdb-topic-init danube-admin-cli schemas list
 
 3. Test with valid message:
 ```bash
-danube-cli produce --service-addr http://localhost:6650 \
-  --topic /default/events \
-  --schema-subject events-v1 \
-  --message '{"event_type":"test","timestamp":"2026-01-08T19:45:00Z"}'
+COUNT=1 RAW_MESSAGE='{"event_type":"test","timestamp":"2026-01-08T19:45:00Z"}' \
+docker-compose --profile tools run --rm test-producer
 ```
 
 ### Connector Not Starting
@@ -435,7 +410,7 @@ curl -X POST http://localhost:8000/sql \
   -d '{"query": "SELECT count() FROM events;"}'
 
 # If zero, resend data:
-./test_producer.sh
+docker-compose --profile tools run --rm test-producer
 
 # Wait for runtime processing (default batch timeout from [processing])
 sleep 2
