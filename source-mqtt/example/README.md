@@ -258,7 +258,7 @@ chmod +x danube-cli-macos
 # Download danube-cli-windows.exe from the releases page
 ```
 
-**Note:** The `test_producer.sh` script automatically detects `danube-cli-linux`, `danube-cli-macos`, or `danube-cli` in the current directory, so you don't need to install it system-wide.
+**Note:** If you invoke `test-publisher.sh`, it publishes to MQTT via Docker and does not require a local `danube-cli` installation.
 
 **Available platforms:**
 - Linux: `danube-cli-linux`

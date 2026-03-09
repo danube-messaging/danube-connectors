@@ -1,6 +1,6 @@
 [package]
 name = "danube-source-mqtt"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["Danube Team"]
 description = "MQTT source connector for Danube Connect"
