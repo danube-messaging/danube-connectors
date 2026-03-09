@@ -17,17 +17,13 @@ azure_container = "delta-tables"
 # Azure credentials from environment:
 # - AZURE_STORAGE_ACCOUNT_KEY or AZURE_STORAGE_SAS_TOKEN
 
-# Global batch settings (can be overridden per topic)
-batch_size = 100           # Flush after 100 messages
-flush_interval_ms = 3000    # OR flush after 3 seconds (whichever comes first)
-
 #######################
 # IoT Sensor Data Topic
 #######################
-[[deltalake.topic_mappings]]
-topic = "/iot/sensors"
+[[deltalake.routes]]
+from = "/iot/sensors"
 subscription = "deltalake-sensors"
-delta_table_path = "abfss://delta-tables@mystorageaccount.dfs.core.windows.net/sensors"
+to = "abfss://delta-tables@mystorageaccount.dfs.core.windows.net/sensors"
 write_mode = "append"
 include_danube_metadata = true
 

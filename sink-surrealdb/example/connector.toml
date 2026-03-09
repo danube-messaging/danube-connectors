@@ -35,15 +35,11 @@ database = "default"
 connection_timeout_secs = 30
 request_timeout_secs = 30
 
-# Global batch settings (can be overridden per topic)
-batch_size = 100
-flush_interval_ms = 3000
-
 # Topic Mapping: Danube topic → SurrealDB table
 # You can define multiple mappings to route different topics to different tables
-[[surrealdb.topic_mappings]]
+[[surrealdb.routes]]
 # Danube topic to consume from
-topic = "/default/events"
+from = "/default/events"
 
 # Subscription name (for consumer group)
 subscription = "surrealdb-sink-sub"
@@ -52,7 +48,7 @@ subscription = "surrealdb-sink-sub"
 subscription_type = "Shared"
 
 # Target SurrealDB table name
-table_name = "events"
+to = "events"
 
 # Schema validation - validates messages against registered schema (v0.2.0)
 # If set, the runtime validates and deserializes messages automatically
@@ -67,7 +63,3 @@ storage_mode = "Document"
 # Include Danube metadata in each record
 # Adds _danube_metadata field with topic, offset, timestamp, message_id
 include_danube_metadata = true
-
-# Optional: Override global batch settings for this specific topic
-# batch_size = 50
-# flush_interval_ms = 500

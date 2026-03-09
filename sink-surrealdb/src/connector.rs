@@ -14,7 +14,6 @@ use danube_connect_core::{
     ConnectorConfig, ConnectorError, ConnectorResult, ConsumerConfig, SinkConnector, SinkRecord,
 };
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
 use surrealdb::engine::remote::ws::{Client, Ws};
 use surrealdb::opt::auth::Root;
 use surrealdb::Surreal;
@@ -26,18 +25,6 @@ struct TableContext {
     /// Topic mapping configuration
     mapping: TopicMapping,
 
-    /// Batch buffer for this table
-    batch_buffer: Vec<SurrealDBRecord>,
-
-    /// Last flush timestamp
-    last_flush: Instant,
-
-    /// Effective batch size for this table
-    batch_size: usize,
-
-    /// Effective flush interval for this table
-    flush_interval: Duration,
-
     /// Statistics
     records_inserted: u64,
     batches_flushed: u64,
@@ -45,29 +32,13 @@ struct TableContext {
 }
 
 impl TableContext {
-    fn new(mapping: TopicMapping, global_batch_size: usize, global_flush_interval_ms: u64) -> Self {
-        let batch_size = mapping.batch_size.unwrap_or(global_batch_size);
-        let flush_interval = Duration::from_millis(
-            mapping
-                .flush_interval_ms
-                .unwrap_or(global_flush_interval_ms),
-        );
-
+    fn new(mapping: TopicMapping) -> Self {
         Self {
             mapping,
-            batch_buffer: Vec::with_capacity(batch_size),
-            last_flush: Instant::now(),
-            batch_size,
-            flush_interval,
             records_inserted: 0,
             batches_flushed: 0,
             last_error: None,
         }
-    }
-
-    fn should_flush(&self) -> bool {
-        self.batch_buffer.len() >= self.batch_size
-            || (!self.batch_buffer.is_empty() && self.last_flush.elapsed() >= self.flush_interval)
     }
 }
 
@@ -88,15 +59,11 @@ impl SurrealDBSinkConnector {
     pub fn with_config(config: SurrealDBSinkConfig) -> Self {
         let tables = config
             .surrealdb
-            .topic_mappings
+            .routes
             .iter()
             .map(|mapping| {
-                let context = TableContext::new(
-                    mapping.clone(),
-                    config.surrealdb.batch_size,
-                    config.surrealdb.flush_interval_ms,
-                );
-                (mapping.topic.clone(), context)
+                let context = TableContext::new(mapping.clone());
+                (mapping.from.clone(), context)
             })
             .collect();
 
@@ -114,18 +81,22 @@ impl SurrealDBSinkConnector {
     }
 
     /// Flush a specific table's batch to SurrealDB
-    async fn flush_table(&mut self, topic: &str) -> ConnectorResult<()> {
+    async fn flush_table(
+        &mut self,
+        topic: &str,
+        records: Vec<SurrealDBRecord>,
+    ) -> ConnectorResult<()> {
         let context = self
             .tables
             .get_mut(topic)
             .ok_or_else(|| ConnectorError::fatal(format!("Unknown topic: {}", topic)))?;
 
-        if context.batch_buffer.is_empty() {
+        if records.is_empty() {
             return Ok(());
         }
 
-        let table_name = &context.mapping.table_name;
-        let batch_size = context.batch_buffer.len();
+        let table_name = &context.mapping.to;
+        let batch_size = records.len();
 
         debug!(
             "Flushing {} records to SurrealDB table '{}'",
@@ -136,9 +107,6 @@ impl SurrealDBSinkConnector {
             .client
             .as_ref()
             .ok_or_else(|| ConnectorError::fatal("SurrealDB client not initialized"))?;
-
-        // Insert records in batch
-        let records: Vec<_> = context.batch_buffer.drain(..).collect();
 
         for record in records {
             // SurrealDB 2.x has serialization issues with serde_json::Value enums
@@ -185,29 +153,12 @@ impl SurrealDBSinkConnector {
         // Update statistics
         context.records_inserted += batch_size as u64;
         context.batches_flushed += 1;
-        context.last_flush = Instant::now();
         context.last_error = None;
 
         info!(
             "Successfully flushed {} records to table '{}' (total: {}, batches: {})",
             batch_size, table_name, context.records_inserted, context.batches_flushed
         );
-
-        Ok(())
-    }
-
-    /// Flush all tables that need flushing
-    async fn flush_all_pending(&mut self) -> ConnectorResult<()> {
-        let topics_to_flush: Vec<String> = self
-            .tables
-            .iter()
-            .filter(|(_, ctx)| ctx.should_flush())
-            .map(|(topic, _)| topic.clone())
-            .collect();
-
-        for topic in topics_to_flush {
-            self.flush_table(&topic).await?;
-        }
 
         Ok(())
     }
@@ -262,7 +213,7 @@ impl SinkConnector for SurrealDBSinkConnector {
         info!("SurrealDB connection initialized successfully");
         info!(
             "Configured {} table mappings",
-            self.config.surrealdb.topic_mappings.len()
+            self.config.surrealdb.routes.len()
         );
 
         Ok(())
@@ -272,14 +223,11 @@ impl SinkConnector for SurrealDBSinkConnector {
         let configs = self
             .config
             .surrealdb
-            .topic_mappings
+            .routes
             .iter()
             .map(|mapping| ConsumerConfig {
-                topic: mapping.topic.clone(),
-                consumer_name: format!(
-                    "{}-{}",
-                    self.config.core.connector_name, mapping.table_name
-                ),
+                topic: mapping.from.clone(),
+                consumer_name: format!("{}-{}", self.config.core.connector_name, mapping.to),
                 subscription: mapping.subscription.clone(),
                 subscription_type: mapping.subscription_type.clone(),
                 expected_schema_subject: mapping.expected_schema_subject.clone(),
@@ -289,35 +237,23 @@ impl SinkConnector for SurrealDBSinkConnector {
         Ok(configs)
     }
 
-    async fn process(&mut self, record: SinkRecord) -> ConnectorResult<()> {
-        let topic = record.topic();
-
-        // Get the table context for this topic
-        let context = self.tables.get_mut(topic).ok_or_else(|| {
-            ConnectorError::fatal(format!("No mapping configured for topic: {}", topic))
-        })?;
-
-        // Convert message to SurrealDB record based on schema type
-        let surrealdb_record = to_surrealdb_record(&record, &context.mapping)?;
-
-        // Add to batch buffer
-        context.batch_buffer.push(surrealdb_record);
-
-        // Flush if necessary
-        if context.should_flush() {
-            self.flush_table(topic).await?;
-        }
-
-        Ok(())
-    }
-
     async fn process_batch(&mut self, records: Vec<SinkRecord>) -> ConnectorResult<()> {
+        let mut batches: HashMap<String, Vec<SurrealDBRecord>> = HashMap::new();
+
         for record in records {
-            self.process(record).await?;
+            let topic = record.topic().to_string();
+
+            let context = self.tables.get(&topic).ok_or_else(|| {
+                ConnectorError::fatal(format!("No mapping configured for topic: {}", topic))
+            })?;
+
+            let surrealdb_record = to_surrealdb_record(&record, &context.mapping)?;
+            batches.entry(topic).or_default().push(surrealdb_record);
         }
 
-        // Flush any pending batches
-        self.flush_all_pending().await?;
+        for (topic, batch) in batches {
+            self.flush_table(&topic, batch).await?;
+        }
 
         Ok(())
     }
@@ -325,22 +261,12 @@ impl SinkConnector for SurrealDBSinkConnector {
     async fn shutdown(&mut self) -> ConnectorResult<()> {
         info!("Shutting down SurrealDB Sink Connector");
 
-        // Flush all remaining batches
-        for topic in self.tables.keys().cloned().collect::<Vec<_>>() {
-            if let Err(e) = self.flush_table(&topic).await {
-                warn!("Error flushing table during shutdown: {}", e);
-            }
-        }
-
         // Print final statistics
         info!("Final statistics:");
         for (topic, context) in &self.tables {
             info!(
                 "  Topic '{}' → Table '{}': {} records ({} batches)",
-                topic,
-                context.mapping.table_name,
-                context.records_inserted,
-                context.batches_flushed
+                topic, context.mapping.to, context.records_inserted, context.batches_flushed
             );
         }
 
@@ -377,42 +303,26 @@ mod tests {
     use super::*;
     use crate::config::StorageMode;
     use danube_connect_core::SubscriptionType;
-    use serde_json::Value;
 
     #[test]
-    fn test_table_context_flush_logic() {
+    fn test_table_context_creation() {
         let mapping = TopicMapping {
-            topic: "/test/topic".to_string(),
+            from: "/test/topic".to_string(),
             subscription: "test-sub".to_string(),
             subscription_type: SubscriptionType::Shared,
-            table_name: "events".to_string(),
+            to: "events".to_string(),
             include_danube_metadata: false,
             expected_schema_subject: None,
-            batch_size: Some(10),
-            flush_interval_ms: Some(5000),
             storage_mode: StorageMode::Document,
         };
 
-        let mut context = TableContext::new(mapping, 100, 1000);
+        let context = TableContext::new(mapping.clone());
 
-        // Should not flush when empty
-        assert!(!context.should_flush());
-
-        // Add records up to batch size
-        for _ in 0..9 {
-            context.batch_buffer.push(SurrealDBRecord {
-                id: None,
-                data: Value::Null,
-            });
-        }
-        assert!(!context.should_flush());
-
-        // Should flush when batch size reached
-        context.batch_buffer.push(SurrealDBRecord {
-            id: None,
-            data: Value::Null,
-        });
-        assert!(context.should_flush());
+        assert_eq!(context.mapping.from, mapping.from);
+        assert_eq!(context.mapping.to, mapping.to);
+        assert_eq!(context.records_inserted, 0);
+        assert_eq!(context.batches_flushed, 0);
+        assert!(context.last_error.is_none());
     }
 
     #[test]
@@ -433,19 +343,15 @@ mod tests {
                 password: None,
                 connection_timeout_secs: 30,
                 request_timeout_secs: 30,
-                topic_mappings: vec![TopicMapping {
-                    topic: "/test/topic".to_string(),
+                routes: vec![TopicMapping {
+                    from: "/test/topic".to_string(),
                     subscription: "test-sub".to_string(),
                     subscription_type: SubscriptionType::Shared,
-                    table_name: "events".to_string(),
+                    to: "events".to_string(),
                     include_danube_metadata: true,
                     expected_schema_subject: None,
-                    batch_size: None,
-                    flush_interval_ms: None,
                     storage_mode: StorageMode::Document,
                 }],
-                batch_size: 100,
-                flush_interval_ms: 1000,
             },
         };
 

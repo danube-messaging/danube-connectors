@@ -14,8 +14,7 @@ use deltalake::operations::create::CreateBuilder;
 use deltalake::writer::{DeltaWriter, RecordBatchWriter};
 use deltalake::{DeltaTable, DeltaTableError};
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info};
 use url::Url;
 
 /// Delta Lake Sink Connector
@@ -27,12 +26,6 @@ pub struct DeltaLakeSinkConnector {
 
     /// Delta tables cache (table_path -> DeltaTable)
     tables: HashMap<String, DeltaTable>,
-
-    /// Record buffers per topic (for batching)
-    buffers: HashMap<String, Vec<SinkRecord>>,
-
-    /// Last flush time per topic (for interval-based flushing)
-    last_flush_time: HashMap<String, Instant>,
 }
 
 impl DeltaLakeSinkConnector {
@@ -41,8 +34,6 @@ impl DeltaLakeSinkConnector {
         Self {
             config,
             tables: HashMap::new(),
-            buffers: HashMap::new(),
-            last_flush_time: HashMap::new(),
         }
     }
 
@@ -52,14 +43,14 @@ impl DeltaLakeSinkConnector {
         mapping: &TopicMapping,
     ) -> ConnectorResult<&mut DeltaTable> {
         // Check if table already exists
-        if !self.tables.contains_key(&mapping.delta_table_path) {
-            info!("Opening Delta table at path: {}", mapping.delta_table_path);
+        if !self.tables.contains_key(&mapping.to) {
+            info!("Opening Delta table at path: {}", mapping.to);
 
             // Configure storage options based on backend
             let storage_options = self.build_storage_options()?;
 
             // Parse table path as URL
-            let table_url = Url::parse(&mapping.delta_table_path).map_err(|e| {
+            let table_url = Url::parse(&mapping.to).map_err(|e| {
                 ConnectorError::fatal(format!("Invalid Delta table path URL: {}", e))
             })?;
 
@@ -71,13 +62,13 @@ impl DeltaLakeSinkConnector {
             .await
             {
                 Ok(table) => {
-                    info!("Loaded existing Delta table: {}", mapping.delta_table_path);
+                    info!("Loaded existing Delta table: {}", mapping.to);
                     table
                 }
                 Err(DeltaTableError::NotATable(_)) => {
                     info!(
                         "Table does not exist, creating new Delta table: {}",
-                        mapping.delta_table_path
+                        mapping.to
                     );
                     self.create_table(mapping, storage_options).await?
                 }
@@ -90,11 +81,11 @@ impl DeltaLakeSinkConnector {
             };
 
             // Cache the table
-            self.tables.insert(mapping.delta_table_path.clone(), table);
+            self.tables.insert(mapping.to.clone(), table);
         }
 
         // Return mutable reference to the table
-        Ok(self.tables.get_mut(&mapping.delta_table_path).unwrap())
+        Ok(self.tables.get_mut(&mapping.to).unwrap())
     }
 
     /// Create a new Delta table with user-defined schema
@@ -120,13 +111,13 @@ impl DeltaLakeSinkConnector {
 
         // Create Delta table
         let table = CreateBuilder::new()
-            .with_location(&mapping.delta_table_path)
+            .with_location(&mapping.to)
             .with_storage_options(storage_options)
             .with_columns(delta_fields)
             .await
             .map_err(|e| ConnectorError::fatal(format!("Failed to create Delta table: {}", e)))?;
 
-        info!("Created new Delta table: {}", mapping.delta_table_path);
+        info!("Created new Delta table: {}", mapping.to);
         Ok(table)
     }
 
@@ -191,7 +182,7 @@ impl DeltaLakeSinkConnector {
         debug!(
             "Writing batch of {} records to Delta table: {}",
             records.len(),
-            mapping.delta_table_path
+            mapping.to
         );
 
         // Convert records to Arrow RecordBatch
@@ -204,10 +195,7 @@ impl DeltaLakeSinkConnector {
         // Note: RecordBatchWriter is not Sync, so we can't cache it
         let mut writer = RecordBatchWriter::for_table(table).map_err(|e| {
             ConnectorError::fatal_with_source(
-                format!(
-                    "Failed to create writer for Delta table: {}",
-                    mapping.delta_table_path
-                ),
+                format!("Failed to create writer for Delta table: {}", mapping.to),
                 e,
             )
         })?;
@@ -215,10 +203,7 @@ impl DeltaLakeSinkConnector {
         // Write the record batch
         writer.write(record_batch).await.map_err(|e| {
             ConnectorError::retryable_with_source(
-                format!(
-                    "Failed to write batch to Delta table: {}",
-                    mapping.delta_table_path
-                ),
+                format!("Failed to write batch to Delta table: {}", mapping.to),
                 e,
             )
         })?;
@@ -226,10 +211,7 @@ impl DeltaLakeSinkConnector {
         // Flush and commit the write
         let new_version = writer.flush_and_commit(table).await.map_err(|e| {
             ConnectorError::retryable_with_source(
-                format!(
-                    "Failed to commit to Delta table: {}",
-                    mapping.delta_table_path
-                ),
+                format!("Failed to commit to Delta table: {}", mapping.to),
                 e,
             )
         })?;
@@ -239,10 +221,7 @@ impl DeltaLakeSinkConnector {
         // reload to ensure we have the latest state for subsequent writes
         table.load().await.map_err(|e| {
             ConnectorError::retryable_with_source(
-                format!(
-                    "Failed to reload Delta table after commit: {}",
-                    mapping.delta_table_path
-                ),
+                format!("Failed to reload Delta table after commit: {}", mapping.to),
                 e,
             )
         })?;
@@ -250,104 +229,9 @@ impl DeltaLakeSinkConnector {
         info!(
             "Successfully wrote {} records to Delta table: {} (version: {})",
             records.len(),
-            mapping.delta_table_path,
+            mapping.to,
             new_version
         );
-
-        Ok(())
-    }
-
-    /// Check flush intervals for all buffered topics and flush if needed
-    async fn check_and_flush_intervals(&mut self) -> ConnectorResult<()> {
-        let now = Instant::now();
-        let topics_to_check: Vec<String> = self.buffers.keys().cloned().collect();
-
-        for topic in topics_to_check {
-            // Skip empty buffers
-            if let Some(buffer) = self.buffers.get(&topic) {
-                if buffer.is_empty() {
-                    continue;
-                }
-            } else {
-                continue;
-            }
-
-            // Get mapping and check flush interval
-            let mapping = match self
-                .config
-                .deltalake
-                .topic_mappings
-                .iter()
-                .find(|m| m.topic == topic)
-            {
-                Some(m) => m,
-                None => continue,
-            };
-
-            let flush_interval_ms =
-                mapping.effective_flush_interval_ms(self.config.deltalake.flush_interval_ms);
-            let flush_interval = Duration::from_millis(flush_interval_ms);
-
-            // Check if flush interval has elapsed
-            if let Some(last_flush) = self.last_flush_time.get(&topic) {
-                let time_since_flush = now.duration_since(*last_flush);
-
-                if time_since_flush >= flush_interval {
-                    let buffer_len = self.buffers.get(&topic).map(|b| b.len()).unwrap_or(0);
-                    debug!(
-                        "⏰ Periodic flush check: topic {} interval elapsed ({:.1}s >= {:.1}s), flushing {} records",
-                        topic,
-                        time_since_flush.as_secs_f64(),
-                        flush_interval.as_secs_f64(),
-                        buffer_len
-                    );
-                    self.flush_topic(&topic).await?;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Flush buffered records for a specific topic
-    async fn flush_topic(&mut self, topic: &str) -> ConnectorResult<()> {
-        if let Some(records) = self.buffers.remove(topic) {
-            if records.is_empty() {
-                return Ok(());
-            }
-
-            // Find the mapping for this topic (clone to avoid borrow issues)
-            let mapping = self
-                .config
-                .deltalake
-                .topic_mappings
-                .iter()
-                .find(|m| m.topic == topic)
-                .cloned()
-                .ok_or_else(|| {
-                    ConnectorError::fatal(format!("No mapping found for topic: {}", topic))
-                })?;
-
-            self.write_batch(&mapping, records).await?;
-
-            // Update last flush time
-            self.last_flush_time
-                .insert(topic.to_string(), Instant::now());
-        }
-
-        Ok(())
-    }
-
-    /// Flush all buffered records
-    async fn flush_all(&mut self) -> ConnectorResult<()> {
-        let topics: Vec<String> = self.buffers.keys().cloned().collect();
-
-        for topic in topics {
-            if let Err(e) = self.flush_topic(&topic).await {
-                error!("Failed to flush topic {}: {}", topic, e);
-                return Err(e);
-            }
-        }
 
         Ok(())
     }
@@ -396,24 +280,19 @@ impl SinkConnector for DeltaLakeSinkConnector {
         );
 
         // Log topic mappings
-        for mapping in &self.config.deltalake.topic_mappings {
+        for mapping in &self.config.deltalake.routes {
             let schema_info = mapping
                 .expected_schema_subject
                 .as_ref()
                 .map(|s| format!(", schema: {}", s))
                 .unwrap_or_default();
             info!(
-                "Topic Mapping: {} -> {} (fields: {}{})",
-                mapping.topic,
-                mapping.delta_table_path,
+                "Route: {} -> {} (fields: {}{})",
+                mapping.from,
+                mapping.to,
                 mapping.field_mappings.len(),
                 schema_info
             );
-        }
-
-        // Initialize buffers
-        for mapping in &self.config.deltalake.topic_mappings {
-            self.buffers.insert(mapping.topic.clone(), Vec::new());
         }
 
         info!("Delta Lake Sink Connector initialized successfully");
@@ -424,10 +303,10 @@ impl SinkConnector for DeltaLakeSinkConnector {
         let configs = self
             .config
             .deltalake
-            .topic_mappings
+            .routes
             .iter()
             .map(|mapping| ConsumerConfig {
-                topic: mapping.topic.clone(),
+                topic: mapping.from.clone(),
                 subscription: mapping.subscription.clone(),
                 consumer_name: format!(
                     "{}-{}",
@@ -442,111 +321,32 @@ impl SinkConnector for DeltaLakeSinkConnector {
         Ok(configs)
     }
 
-    async fn process(&mut self, record: SinkRecord) -> ConnectorResult<()> {
-        debug!(
-            "🔵 process() called - topic: {}",
-            record.topic()
-        );
-
-        // Add to buffer
-        let topic = record.topic().to_string();
-        let buffer = self.buffers.entry(topic.clone()).or_insert_with(Vec::new);
-
-        // Initialize last flush time if this is the first message for this topic
-        let now = Instant::now();
-        self.last_flush_time.entry(topic.clone()).or_insert(now);
-
-        buffer.push(record);
-
-        debug!("Buffer size for topic {}: {}", topic, buffer.len());
-
-        // Check if we should flush
-        let mapping = self
-            .config
-            .deltalake
-            .topic_mappings
-            .iter()
-            .find(|m| m.topic == topic)
-            .ok_or_else(|| {
-                ConnectorError::fatal(format!("No mapping found for topic: {}", topic))
-            })?;
-
-        let batch_size = mapping.effective_batch_size(self.config.deltalake.batch_size);
-        let flush_interval_ms =
-            mapping.effective_flush_interval_ms(self.config.deltalake.flush_interval_ms);
-        let flush_interval = Duration::from_millis(flush_interval_ms);
-
-        let last_flush = self.last_flush_time.get(&topic).unwrap();
-        let time_since_flush = now.duration_since(*last_flush);
-
-        // Flush if batch size reached OR flush interval elapsed
-        let should_flush_size = buffer.len() >= batch_size;
-        let should_flush_time = !buffer.is_empty() && time_since_flush >= flush_interval;
-
-        if should_flush_size {
-            debug!(
-                "Batch size reached for topic {} ({}/{}), flushing {} records",
-                topic,
-                buffer.len(),
-                batch_size,
-                buffer.len()
-            );
-            self.flush_topic(&topic).await?;
-        } else if should_flush_time {
-            debug!(
-                "Flush interval reached for topic {} ({:.1}s >= {:.1}s), flushing {} records",
-                topic,
-                time_since_flush.as_secs_f64(),
-                flush_interval.as_secs_f64(),
-                buffer.len()
-            );
-            self.flush_topic(&topic).await?;
-        }
-
-        Ok(())
-    }
-
     async fn process_batch(&mut self, records: Vec<SinkRecord>) -> ConnectorResult<()> {
-        // If empty batch, this is a periodic flush check (don't log to reduce noise)
         if records.is_empty() {
-            return self.check_and_flush_intervals().await;
+            return Ok(());
         }
 
-        debug!("🟢 process_batch() called with {} records", records.len());
+        debug!("process_batch() called with {} records", records.len());
 
-        // Group records by topic
         let mut by_topic: HashMap<String, Vec<SinkRecord>> = HashMap::new();
         for record in records {
             let topic = record.topic().to_string();
             by_topic.entry(topic).or_insert_with(Vec::new).push(record);
         }
 
-        // Add to buffers and flush if batch size reached
         for (topic, topic_records) in by_topic {
-            let buffer = self.buffers.entry(topic.clone()).or_insert_with(Vec::new);
-            buffer.extend(topic_records);
-
             let mapping = self
                 .config
                 .deltalake
-                .topic_mappings
+                .routes
                 .iter()
-                .find(|m| m.topic == topic)
+                .find(|m| m.from == topic)
+                .cloned()
                 .ok_or_else(|| {
                     ConnectorError::fatal(format!("No mapping found for topic: {}", topic))
                 })?;
 
-            let batch_size = mapping.effective_batch_size(self.config.deltalake.batch_size);
-
-            // Flush if batch size reached
-            if buffer.len() >= batch_size {
-                debug!(
-                    "Batch size reached for topic {}, flushing {} records",
-                    topic,
-                    buffer.len()
-                );
-                self.flush_topic(&topic).await?;
-            }
+            self.write_batch(&mapping, topic_records).await?;
         }
 
         Ok(())
@@ -554,11 +354,6 @@ impl SinkConnector for DeltaLakeSinkConnector {
 
     async fn shutdown(&mut self) -> ConnectorResult<()> {
         info!("Shutting down Delta Lake Sink Connector");
-
-        // Flush any remaining buffered records
-        if let Err(e) = self.flush_all().await {
-            warn!("Error flushing records during shutdown: {}", e);
-        }
 
         info!("Delta Lake Sink Connector shutdown complete");
         Ok(())

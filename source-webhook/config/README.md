@@ -42,10 +42,10 @@ schema_type = "json_schema"
 schema_file = "schemas/payment.json"
 auto_register = true
 
-# Endpoints
-[[endpoints]]
-path = "/webhooks/stripe/payments"
-danube_topic = "/stripe/payments"  # ← Matches schema topic
+# Routes
+[[routes]]
+from = "/webhooks/stripe/payments"
+to = "/stripe/payments"  # ← Matches schema topic
 partitions = 4
 reliable_dispatch = true
 ```
@@ -69,7 +69,7 @@ cat config/connector-no-schemas.toml
 
 **What's included:**
 - ❌ **No schemas** - All webhooks accepted without validation
-- ✅ **2 Endpoints**: Generic and critical webhooks
+- ✅ **2 Routes**: Generic and critical webhooks
 - ✅ **API Key authentication**
 - ✅ **Rate limiting**
 - ✅ **Simpler setup**
@@ -78,9 +78,9 @@ cat config/connector-no-schemas.toml
 ```toml
 # No [[schemas]] sections at all
 
-[[endpoints]]
-path = "/webhooks/generic"
-danube_topic = "/webhooks/events"  # ← No schema validation
+[[routes]]
+from = "/webhooks/generic"
+to = "/webhooks/events"  # ← No schema validation
 ```
 
 **Use this when:**
@@ -123,7 +123,7 @@ max_retries = 5
 
 ```toml
 [[schemas]]
-topic = "/stripe/payments"           # Must match endpoint's danube_topic
+topic = "/stripe/payments"           # Must match route's to value
 subject = "stripe-payment-v1"        # Schema registry subject name
 schema_type = "json_schema"          # or "string", "bytes", "number"
 schema_file = "schemas/payment.json" # Path to schema file (empty for primitives)
@@ -160,12 +160,12 @@ per_ip_enabled = true
 per_ip_requests_per_second = 10
 ```
 
-### Endpoints (Required - at least one)
+### Routes (Required - at least one)
 
 ```toml
-[[endpoints]]
-path = "/webhooks/payments"          # HTTP path
-danube_topic = "/stripe/payments"    # Target Danube topic
+[[routes]]
+from = "/webhooks/payments"          # HTTP path
+to = "/stripe/payments"              # Target Danube topic
 partitions = 4                       # Optional: 0 or omitted = non-partitioned
 reliable_dispatch = true             # Optional: default false
 ```
@@ -191,7 +191,7 @@ export WEBHOOK_JWT_SECRET=your-jwt-secret
 ```
 
 **Cannot be overridden** (must be in TOML):
-- Endpoints (`[[endpoints]]`)
+- Routes (`[[routes]]`)
 - Schemas (`[[schemas]]`)
 - Server settings (`[server]`)
 - Rate limiting (`[rate_limit]`)
@@ -286,7 +286,7 @@ cargo run --release
 | Feature | connector.toml | connector-no-schemas.toml |
 |---------|---------------|--------------------------|
 | **Schemas** | ✅ 2 schemas (JSON + String) | ❌ None |
-| **Endpoints** | 4 endpoints | 2 endpoints |
+| **Routes** | 4 routes | 2 routes |
 | **Validation** | ✅ Validates payloads | ❌ Accepts all |
 | **Use case** | Production with SaaS webhooks | Simple/flexible setups |
 | **Data quality** | ✅ Guaranteed | ❌ No guarantees |

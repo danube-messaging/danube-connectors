@@ -87,28 +87,28 @@ per_ip_enabled = true
 per_ip_requests_per_second = 10
 
 # Endpoint 1: Stripe payment webhooks (partitioned, reliable)
-[[endpoints]]
-path = "/webhooks/stripe/payments"
-danube_topic = "/stripe/payments"
+[[routes]]
+from = "/webhooks/stripe/payments"
+to = "/stripe/payments"
 partitions = 4
 reliable_dispatch = true
 
 # Endpoint 2: GitHub push events (partitioned, non-reliable)
-[[endpoints]]
-path = "/webhooks/github/push"
-danube_topic = "/github/push"
+[[routes]]
+from = "/webhooks/github/push"
+to = "/github/push"
 partitions = 2
 reliable_dispatch = false
 
 # Endpoint 3: Generic webhooks (non-partitioned, reliable)
-[[endpoints]]
-path = "/webhooks/generic"
-danube_topic = "/webhooks/generic"
+[[routes]]
+from = "/webhooks/generic"
+to = "/webhooks/generic"
 # partitions = 0  # Omitted = non-partitioned
 reliable_dispatch = true
 
 # Endpoint 4: Monitoring alerts (non-partitioned, non-reliable)
-[[endpoints]]
-path = "/webhooks/alerts"
-danube_topic = "/webhooks/alerts"
+[[routes]]
+from = "/webhooks/alerts"
+to = "/webhooks/alerts"
 reliable_dispatch = false

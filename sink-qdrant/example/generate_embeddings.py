@@ -3,7 +3,7 @@
 Generate sample embeddings for testing the Qdrant Sink Connector
 
 This script generates embeddings and saves them to a JSON file.
-Use test_producer.sh to send them to Danube.
+Use the Dockerized test-producer service to send them to Danube.
 
 Install dependencies:
     pip install sentence-transformers
@@ -101,7 +101,7 @@ def generate_embeddings(count: int, model_name: str, output_file: str):
     print(f"   Output: {output_file}")
     print("=" * 60)
     print("\n💡 Next step:")
-    print(f"   Run: ./test_producer.sh")
+    print("   Run: docker-compose --profile tools run --rm test-producer")
     print()
 
 

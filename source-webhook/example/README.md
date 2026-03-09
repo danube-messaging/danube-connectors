@@ -43,18 +43,16 @@ External Services          Webhook Connector              Danube Broker
 
 This example includes:
 
-1. **etcd** - Metadata store for Danube
-2. **Danube Broker** - Message broker with built-in schema registry and 4 namespaces
-3. **Webhook Connector** - HTTP server receiving and validating webhooks
-4. **Test Publisher** - Simulates external services sending schema-compliant webhooks
-5. **Schema Files** - JSON Schema definitions for payload validation
+1. **Danube Broker** - Single-node broker with built-in schema registry and embedded Raft metadata
+2. **Webhook Connector** - HTTP server receiving and validating webhooks
+3. **Test Publisher** - Simulates external services sending schema-compliant webhooks
+4. **Schema Files** - JSON Schema definitions for payload validation
 
 ## Files
 
 ```
 source-webhook/example/
 ├── docker-compose.yml        # Orchestrates all services
-├── danube_broker.yml          # Danube broker configuration
 ├── connector.toml             # Webhook connector config (with schemas!)
 ├── schemas/
 │   └── payment.json          # JSON Schema for Stripe payments
@@ -63,6 +61,7 @@ source-webhook/example/
 ```
 
 **Key files:**
+- **`../../example_shared/danube_broker_no_auth.yml`** - Shared Danube broker configuration for all examples
 - **`connector.toml`** - Contains 2 schema definitions + 4 endpoint mappings
 - **`schemas/payment.json`** - Validates payment webhook structure
 - **`docker-compose.yml`** - Mounts schemas directory into connector container
@@ -72,15 +71,18 @@ source-webhook/example/
 ### 1. Start the Stack
 
 ```bash
-cd examples/source-webhook
+cd source-webhook/example
 docker-compose up -d
 ```
 
 This will start:
-- etcd (metadata store)
 - Danube broker (message broker)
 - Webhook connector (HTTP server on port 8080)
 - Test publisher (sends sample webhooks every 5 seconds)
+
+**Shared Danube broker config:**
+- The example mounts `../../example_shared/danube_broker_no_auth.yml`
+- Update that single file when Danube broker config changes for all connector examples
 
 ### 2. Check Status
 
@@ -207,7 +209,7 @@ Run the standalone test publisher:
 ./test-publisher.sh
 ```
 
-This will continuously send webhooks to all configured endpoints and show the results.
+This will continuously send webhooks to all configured routes and show the results.
 
 ## Configuration
 
@@ -228,14 +230,14 @@ This example demonstrates schema validation with 2 configured schemas:
 
 **How it works:**
 1. Webhook arrives at endpoint
-2. Connector routes to Danube topic based on endpoint mapping
+2. Connector routes to Danube topic based on the configured route
 3. If schema configured for topic → Runtime validates payload
 4. Valid messages published to Danube
 5. Invalid messages rejected with error
 
-### Endpoints
+### Routes
 
-The example includes 4 webhook endpoints:
+The example includes 4 webhook routes:
 
 | Endpoint | Danube Topic | Partitions | Reliable | Schema | Use Case |
 |----------|--------------|------------|----------|--------|----------|
@@ -331,7 +333,7 @@ docker pull ghcr.io/danube-messaging/danube-cli:latest
 
 ### Consume Webhook Messages
 
-**Topic Mappings (Webhook Endpoint → Danube):**
+**Routes (Webhook Endpoint → Danube):**
 
 The connector routes webhook requests to Danube topics based on `connector.toml`:
 
@@ -386,9 +388,13 @@ You can chain this with a sink connector to forward webhooks to:
 ### Connector Configuration (`connector.toml`)
 
 ```toml
-[core]
 danube_service_url = "http://danube-broker:6650"
 connector_name = "webhook-source-example"
+
+[processing]
+batch_size = 100
+poll_interval_ms = 100
+metrics_port = 9090
 
 [server]
 host = "0.0.0.0"
@@ -407,9 +413,9 @@ burst_size = 200
 per_ip_enabled = true
 per_ip_requests_per_second = 10
 
-[[endpoints]]
-path = "/webhooks/stripe/payments"
-danube_topic = "/stripe/payments"
+[[routes]]
+from = "/webhooks/stripe/payments"
+to = "/stripe/payments"
 partitions = 4
 reliable_dispatch = true
 ```
@@ -447,7 +453,7 @@ docker-compose logs webhook-connector
 ### Webhooks Returning 404
 
 - Verify endpoint path matches configuration
-- Check `connector.toml` endpoints section
+- Check `connector.toml` routes section
 - Endpoint paths are case-sensitive
 
 ### Webhooks Returning 429
@@ -486,5 +492,5 @@ docker-compose down -v
 ## Resources
 
 - [Danube Documentation](https://github.com/danube-messaging/danube)
-- [Webhook Connector Source Code](../../connectors/source-webhook/)
-- [Configuration Reference](../../connectors/source-webhook/config/connector.toml)
+- [Webhook Connector README](../README.md)
+- [Configuration Guide](../config/README.md)

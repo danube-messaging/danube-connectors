@@ -27,11 +27,11 @@ broker_host = "localhost"
 broker_port = 1883
 # ... more MQTT settings
 
-# Topic routing rules
-[[mqtt.topic_mappings]]
-mqtt_topic = "sensors/#"
-danube_topic = "/iot/sensors"
-# ... more mappings
+# Route definitions
+[[mqtt.routes]]
+from = "sensors/#"
+to = "/iot/sensors"
+# ... more routes
 ```
 
 ## Core Settings
@@ -101,16 +101,16 @@ include_metadata = true
 | `clean_session` | boolean | `true` | Start with clean session |
 | `include_metadata` | boolean | `true` | Include MQTT metadata as message attributes |
 
-## Topic Mappings
+## Routes
 
-Topic mappings define how MQTT topics are routed to Danube topics.
+Routes define how MQTT topics are routed to Danube topics.
 
-### Basic Mapping
+### Basic Route
 
 ```toml
-[[mqtt.topic_mappings]]
-mqtt_topic = "sensors/temperature"
-danube_topic = "/iot/temperature"
+[[mqtt.routes]]
+from = "sensors/temperature"
+to = "/iot/temperature"
 qos = "AtLeastOnce"
 partitions = 4
 ```
@@ -124,26 +124,26 @@ MQTT supports two wildcard characters:
 
 ```toml
 # Match sensors/temp/zone1, sensors/temp/zone2, etc.
-[[mqtt.topic_mappings]]
-mqtt_topic = "sensors/temp/+"
-danube_topic = "/iot/temperature"
+[[mqtt.routes]]
+from = "sensors/temp/+"
+to = "/iot/temperature"
 qos = "AtLeastOnce"
 partitions = 4
 
 # Match all sensor topics
-[[mqtt.topic_mappings]]
-mqtt_topic = "sensors/#"
-danube_topic = "/iot/all_sensors"
+[[mqtt.routes]]
+from = "sensors/#"
+to = "/iot/all_sensors"
 qos = "AtMostOnce"
 partitions = 8
 ```
 
-### Topic Mapping Fields
+### Route Fields
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `mqtt_topic` | string | ✅ | MQTT topic pattern (wildcards supported) |
-| `danube_topic` | string | ✅ | Target Danube topic (`/{namespace}/{topic}`) |
+| `from` | string | ✅ | MQTT topic pattern (wildcards supported) |
+| `to` | string | ✅ | Target Danube topic (`/{namespace}/{topic}`) |
 | `qos` | string | ✅ | MQTT QoS level (see below) |
 | `partitions` | integer | ✅ | Number of Danube topic partitions (0 = non-partitioned) |
 | `reliable_dispatch` | boolean | optional | Override QoS-based reliable delivery |
@@ -191,7 +191,7 @@ Environment variables can override **only secrets and connection URLs**:
 ### NOT Supported via Environment Variables
 
 The following **must** be in the TOML file:
-- Topic mappings (`[[mqtt.topic_mappings]]`)
+- Routes (`[[mqtt.routes]]`)
 - QoS levels
 - Partition configuration
 - Retry/processing settings
@@ -227,9 +227,9 @@ broker_host = "mosquitto"
 broker_port = 1883
 client_id = "danube-iot-1"
 
-[[mqtt.topic_mappings]]
-mqtt_topic = "sensors/temperature"
-danube_topic = "/iot/temperature"
+[[mqtt.routes]]
+from = "sensors/temperature"
+to = "/iot/temperature"
 qos = "AtLeastOnce"
 partitions = 4
 ```
@@ -248,16 +248,16 @@ username = "iot_user"
 # password via env: MQTT_PASSWORD
 
 # High-volume sensor data from zone1
-[[mqtt.topic_mappings]]
-mqtt_topic = "sensors/+/zone1"
-danube_topic = "/iot/zone1"
+[[mqtt.routes]]
+from = "sensors/+/zone1"
+to = "/iot/zone1"
 qos = "AtMostOnce"
 partitions = 8
 
 # Critical alerts from all zones
-[[mqtt.topic_mappings]]
-mqtt_topic = "alerts/#"
-danube_topic = "/iot/alerts"
+[[mqtt.routes]]
+from = "alerts/#"
+to = "/iot/alerts"
 qos = "ExactlyOnce"
 partitions = 2
 reliable_dispatch = true
@@ -278,9 +278,9 @@ use_tls = true
 keep_alive_secs = 120
 connection_timeout_secs = 60
 
-[[mqtt.topic_mappings]]
-mqtt_topic = "devices/+/telemetry"
-danube_topic = "/production/telemetry"
+[[mqtt.routes]]
+from = "devices/+/telemetry"
+to = "/production/telemetry"
 qos = "AtLeastOnce"
 partitions = 16
 ```
@@ -297,23 +297,23 @@ broker_port = 1883
 client_id = "danube-fleet"
 
 # Vehicle GPS data
-[[mqtt.topic_mappings]]
-mqtt_topic = "vehicles/+/gps"
-danube_topic = "/fleet/gps"
+[[mqtt.routes]]
+from = "vehicles/+/gps"
+to = "/fleet/gps"
 qos = "AtLeastOnce"
 partitions = 32
 
 # Vehicle diagnostics
-[[mqtt.topic_mappings]]
-mqtt_topic = "vehicles/+/diagnostics"
-danube_topic = "/fleet/diagnostics"
+[[mqtt.routes]]
+from = "vehicles/+/diagnostics"
+to = "/fleet/diagnostics"
 qos = "AtLeastOnce"
 partitions = 16
 
 # Emergency alerts
-[[mqtt.topic_mappings]]
-mqtt_topic = "vehicles/+/emergency"
-danube_topic = "/fleet/emergency"
+[[mqtt.routes]]
+from = "vehicles/+/emergency"
+to = "/fleet/emergency"
 qos = "ExactlyOnce"
 partitions = 4
 reliable_dispatch = true
@@ -321,28 +321,28 @@ reliable_dispatch = true
 
 ## Best Practices
 
-### Topic Mapping Order
+### Route Order
 
-Topic mappings are evaluated in order. Place more specific patterns before general ones:
+Routes are evaluated in order. Place more specific patterns before general ones:
 
 ```toml
 # ✅ Good: Specific first
-[[mqtt.topic_mappings]]
-mqtt_topic = "sensors/critical/#"
-danube_topic = "/iot/critical"
+[[mqtt.routes]]
+from = "sensors/critical/#"
+to = "/iot/critical"
 
-[[mqtt.topic_mappings]]
-mqtt_topic = "sensors/#"
-danube_topic = "/iot/all"
+[[mqtt.routes]]
+from = "sensors/#"
+to = "/iot/all"
 
 # ❌ Bad: General pattern catches everything
-[[mqtt.topic_mappings]]
-mqtt_topic = "sensors/#"
-danube_topic = "/iot/all"
+[[mqtt.routes]]
+from = "sensors/#"
+to = "/iot/all"
 
-[[mqtt.topic_mappings]]
-mqtt_topic = "sensors/critical/#"  # Never reached!
-danube_topic = "/iot/critical"
+[[mqtt.routes]]
+from = "sensors/critical/#"  # Never reached!
+to = "/iot/critical"
 ```
 
 ### QoS Selection

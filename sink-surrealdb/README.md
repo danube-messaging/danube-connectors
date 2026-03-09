@@ -8,7 +8,7 @@ Stream events from Danube into [SurrealDB](https://surrealdb.com/) - the ultimat
 - 🚀 **Multi-Model Support** - Store events as documents or time-series data
 - ⏱️ **Time-Series Optimization** - Automatic timestamp handling for temporal queries
 - 🎯 **Multi-Topic Routing** - Route different topics to different tables with independent configurations
-- 📦 **Configurable Batching** - Optimize throughput with per-topic batch sizes and flush intervals
+- 📦 **Runtime-Managed Batching** - Use shared core processing settings for throughput and latency tuning
 - 🔄 **Subscription Types** - Shared, Exclusive, or FailOver subscription modes
 - 🔑 **Custom Record IDs** - Use message attributes for idempotent inserts or auto-generate
 - 📝 **Metadata Enrichment** - Optionally include Danube metadata (topic, offset, timestamp)
@@ -38,7 +38,7 @@ docker run -d \
   danube/sink-surrealdb:latest
 ```
 
-**Note:** All structural configuration (topics, tables, schema validation, batching) must be in `connector.toml`. See [Configuration](#configuration) section below.
+**Note:** All structural configuration (topics, tables, schema validation, storage mode) must be in `connector.toml`. See [Configuration](#configuration) section below.
 
 ### Complete Example
 
@@ -79,7 +79,7 @@ Environment variables are used **only for secrets and connection URLs**:
 | `SURREALDB_USERNAME` | Database username | **Secrets** - should not be in config files |
 | `SURREALDB_PASSWORD` | Database password | **Secrets** - should not be in config files |
 
-**All other configuration (topics, tables, schema validation, batching) must be in the TOML file.**
+**All other connector configuration (topics, tables, schema validation, storage mode) must be in the TOML file.**
 
 #### TOML Configuration (Required)
 
@@ -97,31 +97,25 @@ database = "events"
 username = "admin"
 password = "password"
 
-batch_size = 100
-flush_interval_ms = 1000
-
 # Route user events to user_events table with schema validation
-[[surrealdb.topic_mappings]]
-topic = "/events/user"
+[[surrealdb.routes]]
+from = "/events/user"
 subscription = "surrealdb-user"
 subscription_type = "Shared"
-table_name = "user_events"
+to = "user_events"
 expected_schema_subject = "user-events-v1"  # Schema validation
 storage_mode = "Document"
 include_danube_metadata = true
-batch_size = 200
 
 # Route IoT data to sensor_readings table (time-series)
-[[surrealdb.topic_mappings]]
-topic = "/iot/sensors"
+[[surrealdb.routes]]
+from = "/iot/sensors"
 subscription = "surrealdb-iot"
 subscription_type = "Shared"
-table_name = "sensor_readings"
+to = "sensor_readings"
 expected_schema_subject = "sensor-v1"  # Schema validation
 storage_mode = "TimeSeries"  # Adds _timestamp field
 include_danube_metadata = true
-batch_size = 500
-flush_interval_ms = 2000
 ```
 
 See [config/README.md](config/README.md) for complete examples and detailed documentation.
@@ -146,11 +140,11 @@ docker build -t danube/sink-surrealdb:latest .
 Validate messages against registered JSON schemas:
 
 ```toml
-[[surrealdb.topic_mappings]]
-topic = "/events/user"
+[[surrealdb.routes]]
+from = "/events/user"
 subscription = "surrealdb-user"
 subscription_type = "Shared"
-table_name = "user_events"
+to = "user_events"
 expected_schema_subject = "user-events-v1"  # Enable validation
 storage_mode = "Document"
 ```
@@ -224,14 +218,13 @@ storage_mode = "TimeSeries"
 **Example Configuration:**
 
 ```toml
-[[surrealdb.topic_mappings]]
-topic = "/iot/temperature"
+[[surrealdb.routes]]
+from = "/iot/temperature"
 subscription = "surrealdb-iot"
 subscription_type = "Shared"
-table_name = "temperature_readings"
+to = "temperature_readings"
 expected_schema_subject = "sensor-v1"
 storage_mode = "TimeSeries"  # Uses Danube publish_time
-batch_size = 500
 ```
 
 **Input Payload:**
@@ -325,25 +318,6 @@ producer.send(payload, Some(attributes)).await?;
 
 ### Performance Tuning
 
-#### Batch Size
-
-Control throughput vs latency:
-
-```toml
-# High throughput (batch more records)
-batch_size = 500
-flush_interval_ms = 5000
-
-# Low latency (flush frequently)
-batch_size = 10
-flush_interval_ms = 100
-```
-
-**Recommendations:**
-- **High-volume streams**: `batch_size = 500-1000`
-- **Real-time analytics**: `batch_size = 50-100`
-- **Transactional data**: `batch_size = 10-20`
-
 #### Connection Protocol
 
 Use WebSocket for better performance:
@@ -353,23 +327,7 @@ url = "ws://surrealdb:8000"  # Recommended
 # url = "http://surrealdb:8000"  # HTTP fallback
 ```
 
-#### Per-Topic Optimization
-
-Different topics can have different performance profiles:
-
-```toml
-# Logs: high volume, larger batches
-[[surrealdb.topic_mappings]]
-topic = "/logs"
-batch_size = 1000
-flush_interval_ms = 5000
-
-# Orders: low volume, fast flush
-[[surrealdb.topic_mappings]]
-topic = "/orders"
-batch_size = 10
-flush_interval_ms = 100
-```
+Runtime throughput and latency tuning is handled by the shared core processing settings rather than SurrealDB-specific batch fields.
 
 ### Monitoring
 

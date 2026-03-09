@@ -9,48 +9,42 @@ mod connector;
 mod rate_limit;
 mod server;
 
-use anyhow::{Context, Result};
-use danube_connect_core::SourceRuntime;
-use std::env;
+use danube_connect_core::{ConnectorResult, SourceRuntime};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use config::WebhookSourceConfig;
 use connector::WebhookConnector;
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> ConnectorResult<()> {
     // Initialize tracing
     init_tracing();
 
     tracing::info!("Starting Danube HTTP/Webhook Source Connector");
     tracing::info!("Version: {}", env!("CARGO_PKG_VERSION"));
 
-    // Load configuration from TOML file
-    let config_path =
-        env::var("CONNECTOR_CONFIG_PATH").unwrap_or_else(|_| "config/connector.toml".to_string());
-
-    tracing::info!("Loading configuration from: {}", config_path);
-
-    let webhook_config =
-        WebhookSourceConfig::from_file(&config_path).context("Failed to load configuration")?;
+    let webhook_config = WebhookSourceConfig::load().map_err(|e| {
+        tracing::error!("Failed to load configuration: {}", e);
+        e
+    })?;
 
     tracing::info!(
         connector_name = %webhook_config.core.connector_name,
         danube_url = %webhook_config.core.danube_service_url,
         server_addr = %webhook_config.bind_address(),
-        endpoints = webhook_config.endpoints.len(),
+        routes = webhook_config.routes.len(),
         schemas = webhook_config.core.schemas.len(),
         "Configuration loaded successfully"
     );
 
     // Log endpoint configuration
-    for endpoint in &webhook_config.endpoints {
+    for endpoint in &webhook_config.routes {
         tracing::info!(
-            path = %endpoint.path,
-            topic = %endpoint.danube_topic,
+            path = %endpoint.from,
+            topic = %endpoint.to,
             partitions = endpoint.partitions,
             reliable_dispatch = endpoint.reliable_dispatch,
-            "Configured endpoint"
+            "Configured route"
         );
     }
 

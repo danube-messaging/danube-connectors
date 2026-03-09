@@ -10,8 +10,7 @@ use qdrant_client::qdrant::PointStruct;
 use qdrant_client::qdrant::{CreateCollectionBuilder, UpsertPointsBuilder};
 use qdrant_client::Qdrant;
 use std::collections::HashMap;
-use std::time::Instant;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Qdrant Sink Connector
 ///
@@ -20,48 +19,18 @@ use tracing::{debug, info, warn};
 struct CollectionContext {
     /// Topic mapping configuration for this collection
     mapping: TopicMapping,
-    /// Batch buffer for this collection
-    batch_buffer: Vec<PointStruct>,
-    /// Last flush time for this collection
-    last_flush: Instant,
-    /// Effective batch size (topic-specific or global)
-    effective_batch_size: usize,
-    /// Effective batch timeout (topic-specific or global)
-    effective_batch_timeout_ms: u64,
     /// Statistics
     points_inserted: u64,
     batches_flushed: u64,
 }
 
 impl CollectionContext {
-    fn new(mapping: TopicMapping, global_batch_size: usize, global_batch_timeout: u64) -> Self {
-        let effective_batch_size = mapping.effective_batch_size(global_batch_size);
-        let effective_batch_timeout_ms = mapping.effective_batch_timeout(global_batch_timeout);
-
+    fn new(mapping: TopicMapping) -> Self {
         Self {
             mapping,
-            batch_buffer: Vec::with_capacity(effective_batch_size),
-            last_flush: Instant::now(),
-            effective_batch_size,
-            effective_batch_timeout_ms,
             points_inserted: 0,
             batches_flushed: 0,
         }
-    }
-
-    fn should_flush(&self) -> bool {
-        if self.batch_buffer.is_empty() {
-            return false;
-        }
-
-        // Flush if batch is full
-        if self.batch_buffer.len() >= self.effective_batch_size {
-            return true;
-        }
-
-        // Flush if timeout exceeded
-        let elapsed = self.last_flush.elapsed().as_millis() as u64;
-        elapsed >= self.effective_batch_timeout_ms
     }
 }
 
@@ -88,9 +57,7 @@ impl QdrantSinkConnector {
             config: QdrantConfig {
                 url: String::new(),
                 api_key: None,
-                topic_mappings: vec![],
-                batch_size: 100,
-                batch_timeout_ms: 1000,
+                routes: vec![],
                 timeout_secs: 30,
             },
             client: None,
@@ -99,12 +66,16 @@ impl QdrantSinkConnector {
     }
 
     /// Flush batch for a specific collection
-    async fn flush_batch(&mut self, topic: &str) -> ConnectorResult<()> {
+    async fn flush_batch(
+        &mut self,
+        topic: &str,
+        points_to_insert: Vec<PointStruct>,
+    ) -> ConnectorResult<()> {
         let context = self.collections.get_mut(topic).ok_or_else(|| {
             ConnectorError::fatal(format!("No collection context found for topic: {}", topic))
         })?;
 
-        if context.batch_buffer.is_empty() {
+        if points_to_insert.is_empty() {
             return Ok(());
         }
 
@@ -113,18 +84,17 @@ impl QdrantSinkConnector {
             .as_ref()
             .ok_or_else(|| ConnectorError::fatal("Qdrant client not initialized"))?;
 
-        let points_to_insert = std::mem::take(&mut context.batch_buffer);
         let count = points_to_insert.len();
 
         info!(
             "Flushing batch of {} points to Qdrant collection '{}' (topic: {})",
-            count, context.mapping.collection_name, topic
+            count, context.mapping.to, topic
         );
 
         // Upsert points to Qdrant
         client
             .upsert_points(UpsertPointsBuilder::new(
-                &context.mapping.collection_name,
+                &context.mapping.to,
                 points_to_insert,
             ))
             .await
@@ -134,14 +104,10 @@ impl QdrantSinkConnector {
 
         context.points_inserted += count as u64;
         context.batches_flushed += 1;
-        context.last_flush = Instant::now();
 
         info!(
             "Successfully inserted {} points to '{}' (total: {}, batches: {})",
-            count,
-            context.mapping.collection_name,
-            context.points_inserted,
-            context.batches_flushed
+            count, context.mapping.to, context.points_inserted, context.batches_flushed
         );
 
         Ok(())
@@ -160,15 +126,12 @@ impl QdrantSinkConnector {
             .await
             .map_err(|e| ConnectorError::fatal(format!("Failed to list collections: {}", e)))?;
 
-        let collection_exists = collections
-            .collections
-            .iter()
-            .any(|c| c.name == mapping.collection_name);
+        let collection_exists = collections.collections.iter().any(|c| c.name == mapping.to);
 
         if collection_exists {
             info!(
                 "Collection '{}' already exists (topic: {})",
-                mapping.collection_name, mapping.topic
+                mapping.to, mapping.from
             );
             return Ok(());
         }
@@ -176,14 +139,14 @@ impl QdrantSinkConnector {
         if !mapping.auto_create_collection {
             return Err(ConnectorError::fatal(format!(
                 "Collection '{}' does not exist and auto_create_collection is disabled",
-                mapping.collection_name
+                mapping.to
             )));
         }
 
         // Create collection
         info!(
             "Creating collection '{}' with dimension {} and distance metric {:?} (topic: {})",
-            mapping.collection_name, mapping.vector_dimension, mapping.distance, mapping.topic
+            mapping.to, mapping.vector_dimension, mapping.distance, mapping.from
         );
 
         let vectors_config = qdrant_client::qdrant::VectorParamsBuilder::new(
@@ -194,21 +157,17 @@ impl QdrantSinkConnector {
 
         client
             .create_collection(
-                CreateCollectionBuilder::new(&mapping.collection_name)
-                    .vectors_config(vectors_config),
+                CreateCollectionBuilder::new(&mapping.to).vectors_config(vectors_config),
             )
             .await
             .map_err(|e| {
                 ConnectorError::fatal(format!(
                     "Failed to create collection '{}': {}",
-                    mapping.collection_name, e
+                    mapping.to, e
                 ))
             })?;
 
-        info!(
-            "Collection '{}' created successfully",
-            mapping.collection_name
-        );
+        info!("Collection '{}' created successfully", mapping.to);
 
         Ok(())
     }
@@ -229,9 +188,9 @@ impl SinkConnector for QdrantSinkConnector {
         self.config.validate()?;
 
         info!(
-            "Qdrant Configuration: url={}, {} topic mapping(s)",
+            "Qdrant Configuration: url={}, {} route(s)",
             self.config.url,
-            self.config.topic_mappings.len()
+            self.config.routes.len()
         );
 
         // Create Qdrant client
@@ -250,23 +209,19 @@ impl SinkConnector for QdrantSinkConnector {
         self.client = Some(client);
 
         // Initialize collection contexts for each topic mapping
-        for mapping in &self.config.topic_mappings {
+        for mapping in &self.config.routes {
             info!(
                 "Initializing collection '{}' for topic '{}' (dimension={}, distance={:?})",
-                mapping.collection_name, mapping.topic, mapping.vector_dimension, mapping.distance
+                mapping.to, mapping.from, mapping.vector_dimension, mapping.distance
             );
 
             // Ensure collection exists
             self.ensure_collection(mapping).await?;
 
             // Create collection context
-            let context = CollectionContext::new(
-                mapping.clone(),
-                self.config.batch_size,
-                self.config.batch_timeout_ms,
-            );
+            let context = CollectionContext::new(mapping.clone());
 
-            self.collections.insert(mapping.topic.clone(), context);
+            self.collections.insert(mapping.from.clone(), context);
         }
 
         info!(
@@ -280,11 +235,11 @@ impl SinkConnector for QdrantSinkConnector {
         // Return consumer config for each topic mapping
         let configs = self
             .config
-            .topic_mappings
+            .routes
             .iter()
             .map(|mapping| ConsumerConfig {
-                topic: mapping.topic.clone(),
-                consumer_name: format!("qdrant-sink-{}", mapping.collection_name),
+                topic: mapping.from.clone(),
+                consumer_name: format!("qdrant-sink-{}", mapping.to),
                 subscription: mapping.subscription.clone(),
                 subscription_type: mapping.subscription_type.clone(),
                 // Use schema subject from mapping if specified
@@ -296,46 +251,36 @@ impl SinkConnector for QdrantSinkConnector {
         Ok(configs)
     }
 
-    async fn process(&mut self, record: SinkRecord) -> ConnectorResult<()> {
-        let topic = record.topic();
+    async fn process_batch(&mut self, records: Vec<SinkRecord>) -> ConnectorResult<()> {
+        let mut batches: HashMap<String, Vec<PointStruct>> = HashMap::new();
 
-        // Get collection context for this topic
-        let context = self.collections.get_mut(topic).ok_or_else(|| {
-            ConnectorError::invalid_data(
-                format!("No collection configured for topic: {}", topic),
-                vec![],
-            )
-        })?;
+        for record in records {
+            let topic = record.topic().to_string();
 
-        // Transform Danube message to Qdrant point
-        let point = transform_to_point(
-            &record,
-            context.mapping.vector_dimension,
-            context.mapping.include_danube_metadata,
-        )?;
+            let context = self.collections.get(&topic).ok_or_else(|| {
+                ConnectorError::invalid_data(
+                    format!("No collection configured for topic: {}", topic),
+                    vec![],
+                )
+            })?;
 
-        debug!(
-            "Transformed message from topic {} into Qdrant point for collection '{}'",
-            record.topic(),
-            context.mapping.collection_name
-        );
+            let point = transform_to_point(
+                &record,
+                context.mapping.vector_dimension,
+                context.mapping.include_danube_metadata,
+            )?;
 
-        // Add to batch buffer
-        context.batch_buffer.push(point);
+            debug!(
+                "Transformed message from topic {} into Qdrant point for collection '{}'",
+                record.topic(),
+                context.mapping.to
+            );
 
-        // Flush if batch is ready
-        if context.should_flush() {
-            self.flush_batch(topic).await?;
+            batches.entry(topic).or_default().push(point);
         }
 
-        Ok(())
-    }
-
-    async fn process_batch(&mut self, records: Vec<SinkRecord>) -> ConnectorResult<()> {
-        // Process each record using process() method
-        // This automatically routes to correct collection and handles batching
-        for record in records {
-            self.process(record).await?;
+        for (topic, points) in batches {
+            self.flush_batch(&topic, points).await?;
         }
 
         Ok(())
@@ -344,23 +289,6 @@ impl SinkConnector for QdrantSinkConnector {
     async fn shutdown(&mut self) -> ConnectorResult<()> {
         info!("Shutting down Qdrant Sink Connector");
 
-        // Flush any remaining points in all collections
-        let topics: Vec<String> = self.collections.keys().cloned().collect();
-
-        for topic in topics {
-            if let Some(context) = self.collections.get(&topic) {
-                if !context.batch_buffer.is_empty() {
-                    warn!(
-                        "Flushing {} remaining points from collection '{}' (topic: {}) before shutdown",
-                        context.batch_buffer.len(),
-                        context.mapping.collection_name,
-                        topic
-                    );
-                    self.flush_batch(&topic).await?;
-                }
-            }
-        }
-
         // Print statistics for all collections
         let mut total_points = 0u64;
         let mut total_batches = 0u64;
@@ -368,10 +296,7 @@ impl SinkConnector for QdrantSinkConnector {
         for (topic, context) in &self.collections {
             info!(
                 "Collection '{}' (topic: {}): {} points inserted, {} batches flushed",
-                context.mapping.collection_name,
-                topic,
-                context.points_inserted,
-                context.batches_flushed
+                context.mapping.to, topic, context.points_inserted, context.batches_flushed
             );
             total_points += context.points_inserted;
             total_batches += context.batches_flushed;
@@ -406,7 +331,6 @@ mod tests {
     use super::*;
     use crate::config::Distance;
     use danube_connect_core::SubscriptionType;
-    use std::collections::HashMap;
 
     #[test]
     fn test_connector_creation() {
@@ -416,78 +340,24 @@ mod tests {
     }
 
     #[test]
-    fn test_collection_context_flush_logic() {
+    fn test_collection_context_creation() {
         let mapping = TopicMapping {
-            topic: "/default/test".to_string(),
+            from: "/default/test".to_string(),
             subscription: "test-sub".to_string(),
             subscription_type: SubscriptionType::Exclusive,
-            collection_name: "test_collection".to_string(),
+            to: "test_collection".to_string(),
             vector_dimension: 384,
             distance: Distance::Cosine,
             auto_create_collection: true,
             include_danube_metadata: true,
             expected_schema_subject: None,
-            batch_size: Some(3),
-            batch_timeout_ms: None,
         };
 
-        let mut context = CollectionContext::new(mapping, 100, 1000);
+        let context = CollectionContext::new(mapping.clone());
 
-        assert!(!context.should_flush()); // Empty buffer
-
-        // Add points up to batch size
-        let empty_payload: HashMap<String, qdrant_client::qdrant::Value> = HashMap::new();
-
-        context
-            .batch_buffer
-            .push(PointStruct::new(1, vec![0.1, 0.2], empty_payload.clone()));
-        context
-            .batch_buffer
-            .push(PointStruct::new(2, vec![0.3, 0.4], empty_payload.clone()));
-        assert!(!context.should_flush()); // Not full yet
-
-        context
-            .batch_buffer
-            .push(PointStruct::new(3, vec![0.5, 0.6], empty_payload));
-        assert!(context.should_flush()); // Now should flush
-    }
-
-    #[test]
-    fn test_topic_mapping_effective_values() {
-        let mapping = TopicMapping {
-            topic: "/default/test".to_string(),
-            subscription: "test-sub".to_string(),
-            subscription_type: SubscriptionType::Exclusive,
-            collection_name: "test_collection".to_string(),
-            vector_dimension: 384,
-            distance: Distance::Cosine,
-            auto_create_collection: true,
-            include_danube_metadata: true,
-            expected_schema_subject: None,
-            batch_size: Some(50),
-            batch_timeout_ms: Some(500),
-        };
-
-        // Uses topic-specific values
-        assert_eq!(mapping.effective_batch_size(100), 50);
-        assert_eq!(mapping.effective_batch_timeout(1000), 500);
-
-        let mapping_defaults = TopicMapping {
-            topic: "/default/test2".to_string(),
-            subscription: "test-sub2".to_string(),
-            subscription_type: SubscriptionType::Exclusive,
-            collection_name: "test_collection2".to_string(),
-            vector_dimension: 768,
-            distance: Distance::Euclid,
-            auto_create_collection: true,
-            include_danube_metadata: false,
-            expected_schema_subject: None,
-            batch_size: None,
-            batch_timeout_ms: None,
-        };
-
-        // Uses global values
-        assert_eq!(mapping_defaults.effective_batch_size(100), 100);
-        assert_eq!(mapping_defaults.effective_batch_timeout(1000), 1000);
+        assert_eq!(context.mapping.from, mapping.from);
+        assert_eq!(context.mapping.to, mapping.to);
+        assert_eq!(context.points_inserted, 0);
+        assert_eq!(context.batches_flushed, 0);
     }
 }

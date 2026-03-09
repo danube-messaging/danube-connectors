@@ -130,10 +130,10 @@ See **[config/README.md](config/README.md)** for comprehensive configuration doc
 
 **Single Collection (Simple RAG):**
 ```toml
-[[qdrant.topic_mappings]]
-topic = "/default/vectors"
+[[qdrant.routes]]
+from = "/default/vectors"
 subscription = "qdrant-sink-sub"
-collection_name = "vectors"
+to = "vectors"
 vector_dimension = 384
 distance = "Cosine"
 auto_create_collection = true
@@ -145,17 +145,19 @@ expected_schema_subject = "embeddings-v1"
 **Multiple Collections with Schema Validation (Advanced RAG):**
 ```toml
 # Chat embeddings - validated with schema
-[[qdrant.topic_mappings]]
-topic = "/chat/embeddings"
-collection_name = "chat_vectors"
+[[qdrant.routes]]
+from = "/chat/embeddings"
+subscription = "qdrant-chat-sub"
+to = "chat_vectors"
 vector_dimension = 384
 distance = "Cosine"
 expected_schema_subject = "chat-embeddings-v1"  # Schema validation
 
 # Documentation - different dimension & schema
-[[qdrant.topic_mappings]]
-topic = "/docs/embeddings"
-collection_name = "documentation"
+[[qdrant.routes]]
+from = "/docs/embeddings"
+subscription = "qdrant-docs-sub"
+to = "documentation"
 vector_dimension = 768
 distance = "Cosine"
 expected_schema_subject = "doc-embeddings-v1"
@@ -163,9 +165,10 @@ expected_schema_subject = "doc-embeddings-v1"
 
 **Without Schema Validation (Backward Compatible):**
 ```toml
-[[qdrant.topic_mappings]]
-topic = "/legacy/vectors"
-collection_name = "legacy_data"
+[[qdrant.routes]]
+from = "/legacy/vectors"
+subscription = "qdrant-legacy-sub"
+to = "legacy_data"
 vector_dimension = 1536
 distance = "Cosine"
 # No expected_schema_subject - accepts any valid JSON
@@ -220,8 +223,7 @@ docker run -d \
   danube-sink-qdrant:latest
 ```
 
-**Note:** All structural configuration (topics, collections, dimensions, batching) must be in `connector.toml`.
-
+**Note:** All structural configuration (topics, collections, dimensions, schema expectations) must be in `connector.toml`.
 ### Monitoring
 
 #### Prometheus Metrics

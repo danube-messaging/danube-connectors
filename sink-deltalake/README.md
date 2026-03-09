@@ -87,7 +87,7 @@ Environment variables are used **only for secrets and connection URLs**:
 | `AZURE_STORAGE_ACCOUNT_KEY` | Azure storage key | **Secrets** - should not be in config files |
 | `GOOGLE_APPLICATION_CREDENTIALS` | GCS service account JSON path | **Secrets** - should not be in config files |
 
-**All other configuration (topics, tables, schemas, batching) must be in the TOML file.**
+**All other connector configuration (topics, tables, schemas, field mappings) must be in the TOML file.**
 
 #### TOML Configuration (Required)
 
@@ -104,13 +104,10 @@ s3_region = "us-east-1"
 s3_endpoint = "http://localhost:9000"  # MinIO
 s3_allow_http = true
 
-batch_size = 1000
-flush_interval_ms = 5000
-
-[[deltalake.topic_mappings]]
-topic = "/events/payments"
+[[deltalake.routes]]
+from = "/events/payments"
 subscription = "deltalake-payments"
-delta_table_path = "s3://my-bucket/tables/payments"
+to = "s3://my-bucket/tables/payments"
 include_danube_metadata = true
 
 # Schema validation (schema created by producer/admin)
@@ -124,11 +121,10 @@ field_mappings = [
 ]
 
 # Route IoT data with nested JSON to sensors table
-[[deltalake.topic_mappings]]
-topic = "/iot/sensors"
+[[deltalake.routes]]
+from = "/iot/sensors"
 subscription = "deltalake-iot"
-delta_table_path = "s3://my-bucket/tables/sensors"
-batch_size = 500
+to = "s3://my-bucket/tables/sensors"
 
 # Schema validation
 expected_schema_subject = "sensor-data-v1"
@@ -170,8 +166,8 @@ When you specify `expected_schema_subject`, the runtime automatically:
 - Provides pre-parsed data to the connector
 
 ```toml
-[[deltalake.topic_mappings]]
-topic = "/events/payments"
+[[deltalake.routes]]
+from = "/events/payments"
 expected_schema_subject = "payment-events-v1"  # Schema created by producer
 field_mappings = [...]
 ```
@@ -257,7 +253,7 @@ Load data into Delta Lake as a staging layer for data warehouse pipelines.
 ## 📈 Performance
 
 - **Throughput**: 10,000+ events/second per instance
-- **Latency**: Sub-second write latency with batching
+- **Latency**: Sub-second write latency with runtime-managed batching
 - **Memory**: ~50-100MB RAM (vs 2-4GB for JVM-based solutions)
 - **Binary Size**: ~15MB (no DataFusion dependency - append-only operations)
 - **Parquet**: Efficient columnar storage with compression
@@ -266,7 +262,7 @@ Load data into Delta Lake as a staging layer for data warehouse pipelines.
 - **Pre-split JSON paths**: Paths cached on config load (99.99% reduction in allocations)
 - **arrow-json integration**: Efficient type conversion with proper null handling
 - **Delta-rs TryFrom**: Native Arrow → Delta type conversion
-- **Batch processing**: Configurable batching reduces write overhead
+- **Runtime-managed batching**: Shared core batching reduces write overhead
 
 **Note:** This connector uses basic append/overwrite operations without the DataFusion query engine, keeping the binary small and focused on streaming ingestion.
 
@@ -295,8 +291,7 @@ Load data into Delta Lake as a staging layer for data warehouse pipelines.
 ### Performance Issues
 
 **Slow writes or high latency:**
-- Increase `batch_size` for higher throughput
-- Adjust `flush_interval_ms` based on latency requirements
+- Tune the shared `[processing]` batch settings for higher throughput or lower latency
 - Check network bandwidth to cloud storage
 - Monitor Delta Lake transaction log size
 

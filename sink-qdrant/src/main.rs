@@ -40,24 +40,18 @@ async fn main() -> ConnectorResult<()> {
     tracing::info!("Connector: {}", config.core.connector_name);
     tracing::info!("Danube URL: {}", config.core.danube_service_url);
     tracing::info!("Qdrant URL: {}", config.qdrant.url);
-    tracing::info!("Topic Mappings: {} configured", config.qdrant.topic_mappings.len());
-    
-    for (idx, mapping) in config.qdrant.topic_mappings.iter().enumerate() {
+    tracing::info!("Routes: {} configured", config.qdrant.routes.len());
+
+    for (idx, mapping) in config.qdrant.routes.iter().enumerate() {
         tracing::info!(
-            "  Mapping {}: Topic '{}' → Collection '{}' (dim={}, distance={:?})",
+            "  Route {}: Topic '{}' → Collection '{}' (dim={}, distance={:?})",
             idx + 1,
-            mapping.topic,
-            mapping.collection_name,
+            mapping.from,
+            mapping.to,
             mapping.vector_dimension,
             mapping.distance
         );
     }
-    
-    tracing::info!("Batch Size: {}", config.qdrant.batch_size);
-    tracing::info!(
-        "Batch Timeout: {}ms",
-        config.qdrant.batch_timeout_ms
-    );
 
     // Create connector instance with Qdrant configuration
     let connector = QdrantSinkConnector::with_config(config.qdrant);

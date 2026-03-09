@@ -16,14 +16,14 @@ This example shows how to:
 ```
 ┌─────────────────┐
 │  Test Producer  │
-│  (danube-cli)   │
+│ (Docker Tools)  │
 └────────┬────────┘
          │ Events (JSON + Schema)
          ▼
-┌─────────────────┐     ┌───────────────┐     ┌──────────┐
-│ Danube Broker   │────▶│ Schema        │────▶│   ETCD   │
-│  Topic: events  │     │ Registry      │     │ Metadata │
-│  Schema: v1     │     │ (events-v1)   │     └──────────┘
+┌─────────────────┐     ┌───────────────┐
+│ Danube Broker   │────▶│ Schema        │
+│  Topic: events  │     │ Registry      │
+│  Embedded Raft  │     │ (events-v1)   │
 └────────┬────────┘     └───────────────┘
          │ Validated Stream
          ▼
@@ -45,7 +45,7 @@ This example shows how to:
 ### 1. Start the Stack
 
 ```bash
-# Start all services (ETCD, Danube, Topic Init, SurrealDB, Connector)
+# Start all services (Danube, Topic Init, SurrealDB, Connector)
 docker-compose up -d
 
 # Check logs
@@ -59,68 +59,51 @@ docker-compose ps
 ```
 
 **Startup Sequence:**
-1. **ETCD** starts and becomes healthy
-2. **Danube Broker** starts (depends on ETCD)
-3. **Topic Init** (depends on Danube):
+1. **Danube Broker** starts as a single-node broker using embedded Raft metadata
+2. **Topic Init** (depends on Danube):
    - Registers schema `events-v1` in Schema Registry
    - Creates `/default/events` topic with schema validation
-4. **SurrealDB** starts independently and becomes healthy
-5. **SurrealDB Sink** starts (depends on topic creation + SurrealDB health)
+3. **SurrealDB** starts independently and becomes healthy
+4. **SurrealDB Sink** starts (depends on topic creation + SurrealDB health)
+
+**Shared Danube broker config:**
+- The example mounts `../../example_shared/danube_broker_no_auth.yml`
+- Update that single file when Danube broker config changes for all connector examples
 
 Services:
-- **ETCD**: `http://localhost:2379` (Danube metadata storage)
 - **Danube Broker**: `http://localhost:6650`
 - **Danube Admin API**: `http://localhost:50051`
 - **Danube Metrics**: `http://localhost:9040/metrics`
 - **SurrealDB HTTP/WS**: `http://localhost:8000`
 - **Connector Metrics**: `http://localhost:9090/metrics`
+- **Docker Tools Profile**: `test-producer`
 
-### 2. Install danube-cli (v0.6.1+)
+### 2. Use the Dockerized Helper Tools
 
-Download v0.6.1 or later for schema validation support from [Danube Releases](https://github.com/danube-messaging/danube/releases):
+The example no longer requires local Python or `danube-cli` for the main workflow.
 
-```bash
-# Linux
-wget https://github.com/danube-messaging/danube/releases/download/v0.6.1/danube-cli-linux
-chmod +x danube-cli-linux
+On first use, Docker Compose builds a small Python tools image from `Dockerfile.tools` and reuses it for message production.
 
-# macOS (Apple Silicon)
-wget https://github.com/danube-messaging/danube/releases/download/v0.6.1/danube-cli-macos
-chmod +x danube-cli-macos
-
-# Windows
-# Download danube-cli-windows.exe from the releases page
-```
-
-**Note:** The `test_producer.sh` script automatically detects `danube-cli-linux`, `danube-cli-macos`, or `danube-cli` in the current directory.
-
-**Available platforms:**
-- Linux: `danube-cli-linux`
-- macOS (Apple Silicon): `danube-cli-macos`
-- Windows: `danube-cli-windows.exe`
-
-Or use the Docker image:
-```bash
-docker pull ghcr.io/danube-messaging/danube-cli:latest
-```
+When overriding helper connection settings, use the Docker service names inside the Compose network:
+- Danube: `http://danube-broker:6650`
 
 ### 3. Send Test Data
 
 ```bash
 # Send 10 sample events
-./test_producer.sh
+docker-compose --profile tools run --rm test-producer
 
 # Send more events
-COUNT=50 ./test_producer.sh
+COUNT=50 docker-compose --profile tools run --rm test-producer
 
 # Custom configuration
-DANUBE_URL=http://localhost:6650 \
+DANUBE_URL=http://danube-broker:6650 \
 TOPIC=/default/events \
 COUNT=20 \
-./test_producer.sh
+docker-compose --profile tools run --rm test-producer
 ```
 
-The script generates various event types validated against the `events-v1` schema:
+The producer generates various event types validated against the `events-v1` schema:
 - **user_signup**: New user registrations
 - **user_login**: User login events
 - **purchase**: E-commerce transactions
@@ -185,7 +168,7 @@ curl -X POST http://localhost:8000/sql \
 ```
 
 
-## Schema Validation (v0.2.0)
+## Schema Validation
 
 ### Event Schema
 
@@ -209,7 +192,7 @@ Messages are validated against `events-schema.json`:
 
 1. **Schema Registration**: `topic-init` service registers `events-v1` schema
 2. **Topic Creation**: Topic created with `--schema-subject events-v1`
-3. **Producer Validation**: `danube-cli` validates messages before sending
+3. **Producer Validation**: The Dockerized Python producer references `events-v1` before sending
 4. **Runtime Validation**: Broker validates all messages
 5. **Automatic Deserialization**: Connector receives pre-validated, deserialized JSON
 
@@ -224,14 +207,14 @@ Messages are validated against `events-schema.json`:
 
 ### Single Topic Configuration
 
-The example uses a single topic mapping in `connector.toml`:
+The example uses a single route in `connector.toml`:
 
 ```toml
-[[surrealdb.topic_mappings]]
-topic = "/default/events"
+[[surrealdb.routes]]
+from = "/default/events"
 subscription = "surrealdb-sink-sub"
 subscription_type = "Shared"            # Load balancing
-table_name = "events"
+to = "events"
 expected_schema_subject = "events-v1"  # Schema validation
 storage_mode = "Document"
 include_danube_metadata = true
@@ -239,35 +222,33 @@ include_danube_metadata = true
 
 ### Multi-Topic Configuration
 
-To route multiple Danube topics to different SurrealDB tables, add more mappings:
+To route multiple Danube topics to different SurrealDB tables, add more routes:
 
 ```toml
 # User events → users table (with schema validation)
-[[surrealdb.topic_mappings]]
-topic = "/default/users"
+[[surrealdb.routes]]
+from = "/default/users"
 subscription = "surrealdb-users"
 subscription_type = "Shared"
-table_name = "users"
+to = "users"
 expected_schema_subject = "users-v1"  # Validate against users schema
 storage_mode = "Document"
 
 # IoT sensor data → temperature table (time-series with schema)
-[[surrealdb.topic_mappings]]
-topic = "/iot/temperature"
+[[surrealdb.routes]]
+from = "/iot/temperature"
 subscription = "surrealdb-iot"
 subscription_type = "Shared"
-table_name = "temperature_readings"
+to = "temperature_readings"
 expected_schema_subject = "sensor-v1"  # Validate sensor data
 storage_mode = "TimeSeries"  # Adds _timestamp field
-batch_size = 500
-flush_interval_ms = 2000
 
 # Logs → logs table (no schema validation for flexibility)
-[[surrealdb.topic_mappings]]
-topic = "/logs/application"
+[[surrealdb.routes]]
+from = "/logs/application"
 subscription = "surrealdb-logs"
 subscription_type = "Exclusive"
-table_name = "app_logs"
+to = "app_logs"
 # expected_schema_subject not set - accepts any data
 storage_mode = "Document"
 ```
@@ -370,16 +351,12 @@ docker exec surrealdb-topic-init danube-admin-cli topics describe /default/event
 **Test schema validation:**
 ```bash
 # Valid message (passes validation)
-danube-cli produce --service-addr http://localhost:6650 \
-  --topic /default/events \
-  --schema-subject events-v1 \
-  --message '{"event_type":"test","timestamp":"2026-01-08T19:45:00Z"}'
+COUNT=1 RAW_MESSAGE='{"event_type":"test","timestamp":"2026-01-08T19:45:00Z"}' \
+docker-compose --profile tools run --rm test-producer
 
 # Invalid message (fails validation - missing required field)
-danube-cli produce --service-addr http://localhost:6650 \
-  --topic /default/events \
-  --schema-subject events-v1 \
-  --message '{"event_type":"test"}'  # Missing timestamp - will fail
+COUNT=1 RAW_MESSAGE='{"event_type":"test"}' \
+docker-compose --profile tools run --rm test-producer
 ```
 
 ## Troubleshooting
@@ -403,10 +380,8 @@ docker exec surrealdb-topic-init danube-admin-cli schemas list
 
 3. Test with valid message:
 ```bash
-danube-cli produce --service-addr http://localhost:6650 \
-  --topic /default/events \
-  --schema-subject events-v1 \
-  --message '{"event_type":"test","timestamp":"2026-01-08T19:45:00Z"}'
+COUNT=1 RAW_MESSAGE='{"event_type":"test","timestamp":"2026-01-08T19:45:00Z"}' \
+docker-compose --profile tools run --rm test-producer
 ```
 
 ### Connector Not Starting
@@ -435,9 +410,9 @@ curl -X POST http://localhost:8000/sql \
   -d '{"query": "SELECT count() FROM events;"}'
 
 # If zero, resend data:
-./test_producer.sh
+docker-compose --profile tools run --rm test-producer
 
-# Wait for batch flush (default: 1 second)
+# Wait for runtime processing (default batch timeout from [processing])
 sleep 2
 
 # Try query again
@@ -474,38 +449,22 @@ docker-compose logs surrealdb-sink | grep "Flushing"
 
 ## Performance Tips
 
-### Optimize Batch Size
+### Tune Runtime Processing
 
 For high throughput:
 
 ```toml
+[processing]
 batch_size = 500
-flush_interval_ms = 5000
+batch_timeout_ms = 5000
 ```
 
 For low latency:
 
 ```toml
+[processing]
 batch_size = 10
-flush_interval_ms = 100
-```
-
-### Per-Topic Optimization
-
-```toml
-# High-volume topic
-[[surrealdb.topic_mappings]]
-topic = "/logs/application"
-table_name = "logs"
-batch_size = 1000
-flush_interval_ms = 10000
-
-# Real-time topic
-[[surrealdb.topic_mappings]]
-topic = "/alerts/critical"
-table_name = "alerts"
-batch_size = 1
-flush_interval_ms = 0
+batch_timeout_ms = 100
 ```
 
 ## Cleanup
@@ -538,9 +497,8 @@ With `include_danube_metadata = true`, records include Danube metadata:
   },
   "_danube_metadata": {
     "danube_topic": "/default/events",
-    "danube_offset": 42,
     "danube_timestamp": "2026-01-08T19:45:23.456789Z",
-    "danube_message_id": "..."
+    "danube_producer": "example-producer"
   }
 }
 ```

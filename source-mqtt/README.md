@@ -72,16 +72,16 @@ broker_port = 1883
 client_id = "danube-connector-1"
 
 # Route sensors/temp/zone1 → /iot/sensors_zone1
-[[mqtt.topic_mappings]]
-mqtt_topic = "sensors/+/zone1"  # MQTT pattern (wildcards supported)
-danube_topic = "/iot/sensors_zone1"  # Format: /{namespace}/{topic}
+[[mqtt.routes]]
+from = "sensors/+/zone1"  # MQTT pattern (wildcards supported)
+to = "/iot/sensors_zone1"  # Format: /{namespace}/{topic}
 qos = "AtLeastOnce"  # QoS 1
 partitions = 4       # Danube topic partitions
 
 # Route devices telemetry → /iot/device_telemetry
-[[mqtt.topic_mappings]]
-mqtt_topic = "devices/+/telemetry"
-danube_topic = "/iot/device_telemetry"
+[[mqtt.routes]]
+from = "devices/+/telemetry"
+to = "/iot/device_telemetry"
 qos = "AtLeastOnce"
 partitions = 2
 

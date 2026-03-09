@@ -16,17 +16,13 @@ gcp_project_id = "my-gcp-project"
 # GCP credentials from environment:
 # - GOOGLE_APPLICATION_CREDENTIALS (path to service account JSON file)
 
-# Global batch settings (can be overridden per topic)
-batch_size = 100           # Flush after 100 messages
-flush_interval_ms = 3000    # OR flush after 3 seconds (whichever comes first)
-
 #######################
 # Analytics Events Topic
 #######################
-[[deltalake.topic_mappings]]
-topic = "/analytics/events"
+[[deltalake.routes]]
+from = "/analytics/events"
 subscription = "deltalake-analytics"
-delta_table_path = "gs://my-bucket/tables/analytics"
+to = "gs://my-bucket/tables/analytics"
 write_mode = "append"
 include_danube_metadata = true
 

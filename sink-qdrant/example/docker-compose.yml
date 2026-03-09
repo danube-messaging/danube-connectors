@@ -1,55 +1,18 @@
 services:
-  # ETCD - Required for Danube broker metadata storage
-  etcd:
-    image: quay.io/coreos/etcd:v3.5.9
-    container_name: danube-etcd
-    environment:
-      - ETCDCTL_API=3
-      - ETCD_NAME=qdrant-etcd
-      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379
-      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
-      - ETCD_INITIAL_CLUSTER=qdrant-etcd=http://etcd:2380
-      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
-      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd:2380
-      - ETCD_INITIAL_CLUSTER_STATE=new
-      - ETCD_INITIAL_CLUSTER_TOKEN=qdrant-example-cluster
-    ports:
-      - "2379:2379"
-      - "2380:2380"
-    networks:
-      - qdrant-network
-    volumes:
-      - etcd_data:/etcd-data
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "etcdctl",
-          "--endpoints=http://127.0.0.1:2379",
-          "endpoint",
-          "health",
-        ]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
-
   # Danube Broker
   danube-broker:
     image: ghcr.io/danube-messaging/danube-broker:latest
     container_name: danube-broker
+    restart: on-failure
     ports:
       - "6650:6650" # Danube service port
       - "50051:50051" # Admin API
       - "9040:9040" # Prometheus metrics
     environment:
-      - RUST_LOG=danube_broker=info,danube_core=info
+      - RUST_LOG=danube_broker=info,danube_core=info,openraft=warn
     volumes:
-      - ./danube_broker.yml:/etc/danube_broker.yml:ro
-      - broker_wal:/data/wal
-    depends_on:
-      etcd:
-        condition: service_healthy
+      - ../../example_shared/danube_broker_no_auth.yml:/etc/danube_broker.yml:ro
+      - broker_data:/danube-data
     networks:
       - qdrant-network
     command:
@@ -60,19 +23,27 @@ services:
         "0.0.0.0:6650",
         "--admin-addr",
         "0.0.0.0:50051",
+        "--raft-addr",
+        "0.0.0.0:7650",
         "--prom-exporter",
         "0.0.0.0:9040",
         "--advertised-addr",
         "danube-broker:6650",
       ]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9040/metrics || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   # Topic Initialization - Creates schema and topic with validation
   topic-init:
-    image: ghcr.io/danube-messaging/danube-cli:latest
+    image: ghcr.io/danube-messaging/danube-admin:latest
     container_name: qdrant-topic-init
     depends_on:
       danube-broker:
-        condition: service_started
+        condition: service_healthy
     environment:
       - DANUBE_ADMIN_ENDPOINT=http://danube-broker:50051
     volumes:
@@ -80,18 +51,28 @@ services:
       - ./embeddings-schema.json:/schemas/embeddings-schema.json:ro
     networks:
       - qdrant-network
-    command:
+    entrypoint:
       - sh
-      - -c
+      - -ec
       - |
         echo 'Waiting for Danube broker to be ready...'
         sleep 5
 
         echo 'Registering schema: embeddings-v1...'
-        danube-admin-cli schemas register embeddings-v1 --schema-type json_schema --file /schemas/embeddings-schema.json || echo 'Schema may already exist'
+        danube-admin schemas register embeddings-v1 --schema-type json_schema --file /schemas/embeddings-schema.json
 
-        echo 'Creating topic /default/vectors with schema validation...'
-        danube-admin-cli topics create /default/vectors --dispatch-strategy reliable --schema-subject embeddings-v1 || echo 'Topic may already exist'
+        echo 'Verifying schema registration...'
+        danube-admin schemas get --subject embeddings-v1
+
+        echo 'Ensuring topic /default/vectors exists with schema validation...'
+        if danube-admin topics describe /default/vectors >/dev/null 2>&1; then
+          echo 'Topic /default/vectors already exists'
+        else
+          danube-admin topics create /default/vectors --dispatch-strategy reliable --schema-subject embeddings-v1
+        fi
+
+        echo 'Verifying topic schema configuration...'
+        danube-admin topics describe /default/vectors
 
         echo 'Schema and topic initialization complete'
     restart: "no"
@@ -156,11 +137,79 @@ services:
       - qdrant-network
     restart: unless-stopped
 
+  embeddings-generator:
+    build:
+      context: .
+      dockerfile: Dockerfile.tools
+    profiles:
+      - tools
+    working_dir: /workspace
+    entrypoint:
+      - python3
+      - generate_embeddings.py
+    environment:
+      - HF_HOME=/models/huggingface
+    volumes:
+      - .:/workspace
+      - hf_cache:/models/huggingface
+    networks:
+      - qdrant-network
+    restart: "no"
+
+  test-producer:
+    build:
+      context: .
+      dockerfile: Dockerfile.tools
+    profiles:
+      - tools
+    depends_on:
+      topic-init:
+        condition: service_completed_successfully
+    working_dir: /workspace
+    entrypoint:
+      - python3
+      - test_producer.py
+    environment:
+      - DANUBE_URL=${DANUBE_URL:-http://danube-broker:6650}
+      - TOPIC=${TOPIC:-/default/vectors}
+      - EMBEDDINGS_FILE=${EMBEDDINGS_FILE:-embeddings.jsonl}
+      - INTERVAL=${INTERVAL:-500}
+      - SCHEMA_SUBJECT=${SCHEMA_SUBJECT:-embeddings-v1}
+      - PRODUCER_NAME=${PRODUCER_NAME:-test_producer}
+    volumes:
+      - .:/workspace
+    networks:
+      - qdrant-network
+    restart: "no"
+
+  vector-search:
+    build:
+      context: .
+      dockerfile: Dockerfile.tools
+    profiles:
+      - tools
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    working_dir: /workspace
+    entrypoint:
+      - python3
+      - search_vectors.py
+    environment:
+      - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
+      - HF_HOME=/models/huggingface
+    volumes:
+      - .:/workspace
+      - hf_cache:/models/huggingface
+    networks:
+      - qdrant-network
+    restart: "no"
+
 networks:
   qdrant-network:
     driver: bridge
 
 volumes:
-  etcd_data:
-  broker_wal:
+  broker_data:
   qdrant_storage:
+  hf_cache:

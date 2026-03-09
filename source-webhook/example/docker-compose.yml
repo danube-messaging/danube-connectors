@@ -1,55 +1,18 @@
 services:
-  # etcd - Required for Danube broker
-  etcd:
-    image: quay.io/coreos/etcd:v3.5.9
-    container_name: danube-etcd
-    environment:
-      - ETCDCTL_API=3
-      - ETCD_NAME=webhook-etcd
-      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379
-      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
-      - ETCD_INITIAL_CLUSTER=webhook-etcd=http://etcd:2380
-      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
-      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd:2380
-      - ETCD_INITIAL_CLUSTER_STATE=new
-      - ETCD_INITIAL_CLUSTER_TOKEN=webhook-example-cluster
-    ports:
-      - "2379:2379"
-      - "2380:2380"
-    networks:
-      - danube-webhook-network
-    volumes:
-      - etcd_data:/etcd-data
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "etcdctl",
-          "--endpoints=http://127.0.0.1:2379",
-          "endpoint",
-          "health",
-        ]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
-
   # Danube Broker
   danube-broker:
     image: ghcr.io/danube-messaging/danube-broker:latest
     container_name: danube-broker
+    restart: on-failure
     ports:
       - "6650:6650"
       - "50051:50051" # Admin API
       - "9040:9040" # Prometheus metrics
     environment:
-      - RUST_LOG=danube_broker=info,danube_core=info
+      - RUST_LOG=danube_broker=info,danube_core=info,openraft=warn
     volumes:
-      - ./danube_broker.yml:/etc/danube_broker.yml:ro
-      - broker_wal:/data/wal
-    depends_on:
-      etcd:
-        condition: service_healthy
+      - ../../example_shared/danube_broker_no_auth.yml:/etc/danube_broker.yml:ro
+      - broker_data:/danube-data
     networks:
       - danube-webhook-network
     command:
@@ -60,11 +23,19 @@ services:
         "0.0.0.0:6650",
         "--admin-addr",
         "0.0.0.0:50051",
+        "--raft-addr",
+        "0.0.0.0:7650",
         "--prom-exporter",
         "0.0.0.0:9040",
         "--advertised-addr",
         "danube-broker:6650",
       ]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9040/metrics || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   # Webhook Source Connector
   webhook-connector:
@@ -74,7 +45,7 @@ services:
     container_name: webhook-example-connector
     depends_on:
       danube-broker:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "8080:8080" # Webhook HTTP server
     volumes:
@@ -174,5 +145,4 @@ networks:
     driver: bridge
 
 volumes:
-  etcd_data:
-  broker_wal:
+  broker_data:

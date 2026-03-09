@@ -8,7 +8,7 @@ This example shows how to:
 1. Run Danube broker, MinIO (S3-compatible storage), and the connector with Docker Compose
 2. Register JSON schemas with Danube Schema Registry
 3. Create topics with schema validation enabled
-4. Generate and validate sample events using danube-cli
+4. Generate and validate sample events using the Dockerized Python producer
 5. Automatically stream events to Delta Lake tables with type safety
 6. Query and analyze the data using Python or Spark
 
@@ -23,14 +23,15 @@ This example shows how to:
 ```
 ┌─────────────────┐
 │  Test Producer  │
-│  (danube-cli)   │
+│ (Docker Tools)  │
 └────────┬────────┘
          │ Events (JSON)
          ▼
-┌─────────────────┐     ┌──────────┐
-│ Danube Broker   │────▶│   ETCD   │
-│  Topic: events  │     │ Metadata │
-└────────┬────────┘     └──────────┘
+┌─────────────────┐
+│ Danube Broker   │
+│  Topic: events  │
+│  Embedded Raft  │
+└────────┬────────┘
          │ Stream
          ▼
 ┌─────────────────┐
@@ -51,7 +52,7 @@ This example shows how to:
 ### 1. Start the Stack
 
 ```bash
-# Start all services (ETCD, Danube, Topic Init, MinIO, Connector)
+# Start all services (Danube, Topic Init, MinIO, Connector)
 docker-compose up -d
 
 # Check logs
@@ -62,55 +63,38 @@ docker-compose ps
 ```
 
 **Startup Sequence:**
-1. **ETCD** starts and becomes healthy
-2. **Danube Broker** starts (depends on ETCD)
-3. **Topic Init** registers schema and creates topic with validation (depends on Danube)
+1. **Danube Broker** starts as a single-node broker using embedded Raft metadata
+2. **Topic Init** registers schema and creates topic with validation (depends on Danube)
    - Registers `events-schema-v1` using `danube-admin-cli schemas register`
    - Creates `/default/events` topic with schema validation using `danube-admin-cli topics create`
-4. **MinIO** starts and becomes healthy
-5. **MinIO Init** creates `delta-tables` bucket (depends on MinIO)
-6. **Delta Lake Sink** starts (depends on topic creation + MinIO bucket)
+3. **MinIO** starts and becomes healthy
+4. **MinIO Init** creates `delta-tables` bucket (depends on MinIO)
+5. **Delta Lake Sink** starts (depends on topic creation + MinIO bucket)
    - Validates incoming messages against `events-schema-v1`
    - Deserializes JSON payloads automatically
    - Extracts fields using configured mappings
 
+**Shared Danube broker config:**
+- The example mounts `../../example_shared/danube_broker_no_auth.yml`
+- Update that single file when Danube broker config changes for all connector examples
+
 Services:
-- **ETCD**: `http://localhost:2379` (Danube metadata storage)
 - **Danube Broker**: `http://localhost:6650`
 - **Danube Admin API**: `http://localhost:50051`
 - **Danube Metrics**: `http://localhost:9040/metrics`
 - **MinIO API**: `http://localhost:9000`
 - **MinIO Console**: `http://localhost:9001` (minioadmin/minioadmin)
 - **Connector Metrics**: `http://localhost:9090/metrics`
+- **Docker Tools Profile**: `test-producer`
 
-### 2. Install danube-cli
+### 2. Use the Dockerized Helper Tools
 
-Download the latest release for your system from [Danube Releases](https://github.com/danube-messaging/danube/releases):
+The example no longer requires local Python or `danube-cli` for the main workflow.
 
-```bash
-# Linux
-wget https://github.com/danube-messaging/danube/releases/download/v0.6.0/danube-cli-linux
-chmod +x danube-cli-linux
+On first use, Docker Compose builds a small Python tools image from `Dockerfile.tools` and reuses it for message production.
 
-# macOS (Apple Silicon)
-wget https://github.com/danube-messaging/danube/releases/download/v0.6.0/danube-cli-macos
-chmod +x danube-cli-macos
-
-# Windows
-# Download danube-cli-windows.exe from the releases page
-```
-
-**Note:** The `test_producer.sh` script automatically detects `danube-cli-linux`, `danube-cli-macos`, or `danube-cli` in the current directory.
-
-**Available platforms:**
-- Linux: `danube-cli-linux`
-- macOS (Apple Silicon): `danube-cli-macos`
-- Windows: `danube-cli-windows.exe`
-
-Or use the Docker image:
-```bash
-docker pull ghcr.io/danube-messaging/danube-cli:latest
-```
+When overriding helper connection settings, use the Docker service names inside the Compose network:
+- Danube: `http://danube-broker:6650`
 
 ### 3. Understand Schema Validation
 
@@ -134,8 +118,8 @@ The example uses JSON Schema validation to ensure data quality:
 
 **Configuration** (`connector.toml`):
 ```toml
-[[deltalake.topic_mappings]]
-topic = "/default/events"
+[[deltalake.routes]]
+from = "/default/events"
 expected_schema_subject = "events-schema-v1"  # Validate against this schema
 
 field_mappings = [
@@ -147,32 +131,28 @@ field_mappings = [
 ```
 
 **Benefits:**
-- ✅ Messages are validated before being accepted
-- ✅ Type-safe deserialization (runtime provides `serde_json::Value`)
-- ✅ Schema evolution support
-- ✅ Automatic field extraction using JSON paths
+- Messages are validated before being accepted
+- Type-safe deserialization (runtime provides `serde_json::Value`)
+- Schema evolution support
+- Automatic field extraction using JSON paths
 
 ### 4. Send Test Data
 
 ```bash
 # Send 10 sample events
-./test_producer.sh
+docker-compose --profile tools run --rm test-producer
 
 # Send more events with custom settings
-COUNT=100 INTERVAL=100 ./test_producer.sh
+COUNT=100 INTERVAL=100 docker-compose --profile tools run --rm test-producer
 
-# Or use danube-cli directly with schema validation
-./danube-cli-linux produce \
-  --service-addr http://localhost:6650 \
-  --topic /default/events \
-  --message '{"event_type":"purchase","user_id":"user_001","product":"laptop","amount":999,"currency":"USD","timestamp":"2024-01-01T12:00:00Z"}' \
-  --schema-subject events-schema-v1 \
-  --reliable
+# Or send a custom message with schema validation
+COUNT=1 RAW_MESSAGE='{"event_type":"purchase","user_id":"user_001","product":"laptop","amount":999,"currency":"USD","timestamp":"2024-01-01T12:00:00Z"}' \
+docker-compose --profile tools run --rm test-producer
 ```
 
-**Note:** The `--schema-subject` flag enables automatic validation against the registered schema.
+**Note:** The Dockerized producer uses `events-schema-v1` by default, which enables automatic validation against the registered schema.
 
-The test script generates various event types:
+The producer generates various event types:
 - **user_signup** - New user registrations
 - **user_login** - User login events
 - **purchase** - E-commerce transactions
@@ -235,9 +215,9 @@ EOF
 The example includes a pre-configured `connector.toml` with:
 
 - **Storage Backend**: S3 (MinIO)
-- **Topic Mapping**: `/default/events` → `s3://delta-tables/events`
+- **Route**: `/default/events` → `s3://delta-tables/events`
 - **Schema**: Flexible schema supporting multiple event types
-- **Batching**: 100 records or 1 second flush interval
+- **Runtime Processing**: Shared `[processing]` settings control batch size and timeout
 - **Metadata**: Includes Danube metadata in `_danube_metadata` column
 
 ## Monitoring
@@ -279,15 +259,14 @@ curl http://localhost:9040/metrics
 
 The example uses a flexible schema that accommodates different event types:
 
-```rust
-schema = [
-    { name = "event_type", data_type = "Utf8", nullable = false },
-    { name = "user_id", data_type = "Utf8", nullable = false },
-    { name = "timestamp", data_type = "Utf8", nullable = false },
-    { name = "product", data_type = "Utf8", nullable = true },
-    { name = "amount", data_type = "Int64", nullable = true },
-    { name = "currency", data_type = "Utf8", nullable = true },
-    // ... more fields
+```toml
+field_mappings = [
+    { json_path = "event_type", column = "event_type", data_type = "Utf8", nullable = false },
+    { json_path = "user_id", column = "user_id", data_type = "Utf8", nullable = false },
+    { json_path = "timestamp", column = "timestamp", data_type = "Utf8", nullable = false },
+    { json_path = "product", column = "product", data_type = "Utf8", nullable = true },
+    { json_path = "amount", column = "amount", data_type = "Int64", nullable = true },
+    { json_path = "currency", column = "currency", data_type = "Utf8", nullable = true },
 ]
 ```
 
@@ -336,7 +315,6 @@ schema = [
 docker-compose ps
 
 # Check logs for specific service
-docker-compose logs etcd
 docker-compose logs danube-broker
 docker-compose logs minio
 docker-compose logs deltalake-sink
@@ -358,7 +336,7 @@ docker-compose logs topic-init
 docker-compose logs deltalake-sink | grep subscription
 
 # 4. Send test message
-./test_producer.sh
+docker-compose --profile tools run --rm test-producer
 ```
 
 ### Cannot Access MinIO Console
@@ -420,44 +398,44 @@ docker-compose down --rmi all
 
 ### Multiple Topics
 
-Add more topic mappings in `connector.toml`:
+Add more routes in `connector.toml`:
 
 ```toml
-[[deltalake.topic_mappings]]
-topic = "/analytics/clicks"
-delta_table_path = "s3://delta-tables/clicks"
-schema_type = "Json"
-schema = [
-    { name = "user_id", data_type = "Utf8", nullable = false },
-    { name = "page_url", data_type = "Utf8", nullable = false },
-    { name = "timestamp", data_type = "Timestamp", nullable = false },
+[[deltalake.routes]]
+from = "/analytics/clicks"
+subscription = "deltalake-clicks"
+to = "s3://delta-tables/clicks"
+field_mappings = [
+    { json_path = "user_id", column = "user_id", data_type = "Utf8", nullable = false },
+    { json_path = "page_url", column = "page_url", data_type = "Utf8", nullable = false },
+    { json_path = "timestamp", column = "timestamp", data_type = "Timestamp", nullable = false },
 ]
 
-[[deltalake.topic_mappings]]
-topic = "/logs/application"
-delta_table_path = "s3://delta-tables/logs"
-schema_type = "Json"
-schema = [
-    { name = "level", data_type = "Utf8", nullable = false },
-    { name = "message", data_type = "Utf8", nullable = false },
-    { name = "timestamp", data_type = "Timestamp", nullable = false },
+[[deltalake.routes]]
+from = "/logs/application"
+subscription = "deltalake-logs"
+to = "s3://delta-tables/logs"
+field_mappings = [
+    { json_path = "level", column = "level", data_type = "Utf8", nullable = false },
+    { json_path = "message", column = "message", data_type = "Utf8", nullable = false },
+    { json_path = "timestamp", column = "timestamp", data_type = "Timestamp", nullable = false },
 ]
 ```
 
 ### Performance Tuning
 
-Adjust batch settings for your workload:
+Adjust the shared runtime processing settings for your workload:
 
 ```toml
 # High throughput
-[deltalake]
+[processing]
 batch_size = 5000
-flush_interval_ms = 10000
+batch_timeout_ms = 10000
 
 # Low latency
-[deltalake]
+[processing]
 batch_size = 100
-flush_interval_ms = 500
+batch_timeout_ms = 500
 ```
 
 ### Production Deployment
@@ -488,8 +466,8 @@ For production use:
 
 ## Resources
 
-- **[Delta Lake Sink Connector Documentation](../../connectors/sink-deltalake/README.md)**
-- **[Configuration Guide](../../connectors/sink-deltalake/config/README.md)**
+- **[Delta Lake Sink Connector Documentation](../README.md)**
+- **[Configuration Guide](../config/README.md)**
 - [Delta Lake Documentation](https://docs.delta.io/)
 - [Danube Documentation](https://github.com/danube-messaging/danube)
 - [MinIO Documentation](https://min.io/docs/)

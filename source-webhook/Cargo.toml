@@ -1,6 +1,6 @@
 [package]
 name = "danube-source-webhook"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["Danube Connect Contributors"]
 description = "HTTP/Webhook source connector for Danube messaging platform"
@@ -13,8 +13,8 @@ path = "src/main.rs"
 
 [dependencies]
 # Danube integration
-danube-connect-core = "0.4.0"
-danube-client = "0.6.1"
+danube-connect-core = "0.5.0"
+danube-client = "0.8.0"
 
 # Async Runtime
 async-trait = "0.1.89"

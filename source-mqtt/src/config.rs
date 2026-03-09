@@ -1,6 +1,8 @@
 //! Configuration for the MQTT Source Connector
 
-use danube_connect_core::{ConnectorConfig, ConnectorResult};
+use danube_connect_core::{
+    ConfigEnvOverrides, ConfigValidate, ConnectorConfig, ConnectorConfigLoader, ConnectorResult,
+};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::time::Duration;
@@ -38,44 +40,17 @@ impl MqttSourceConfig {
     /// # ... mqtt settings
     /// ```
     pub fn load() -> ConnectorResult<Self> {
-        let config_path = env::var("CONNECTOR_CONFIG_PATH")
-            .map_err(|_| danube_connect_core::ConnectorError::config(
-                "CONNECTOR_CONFIG_PATH environment variable must be set to the path of the TOML configuration file"
-            ))?;
-
-        let mut config = Self::from_file(&config_path)?;
-
-        // Apply environment variable overrides for secrets and connection details
-        config.apply_env_overrides();
-
-        Ok(config)
+        ConnectorConfigLoader::new().load()
     }
 
-    /// Load configuration from a TOML file
-    pub fn from_file(path: &str) -> ConnectorResult<Self> {
-        let content = std::fs::read_to_string(path).map_err(|e| {
-            danube_connect_core::ConnectorError::config(format!(
-                "Failed to read config file {}: {}",
-                path, e
-            ))
-        })?;
-
-        toml::from_str(&content).map_err(|e| {
-            danube_connect_core::ConnectorError::config(format!(
-                "Failed to parse config file {}: {}",
-                path, e
-            ))
-        })
+    /// Validate all configuration
+    pub fn validate(&self) -> ConnectorResult<()> {
+        self.validate_config()
     }
+}
 
-    /// Apply environment variable overrides for secrets and connection details
-    ///
-    /// Only overrides sensitive data that shouldn't be in config files:
-    /// - Credentials (username, password)
-    /// - Connection URLs (for different environments)
-    /// - Connector name (for different deployments)
-    fn apply_env_overrides(&mut self) {
-        // Override core Danube settings (mandatory fields from danube-connect-core)
+impl ConfigEnvOverrides for MqttSourceConfig {
+    fn apply_env_overrides(&mut self) -> ConnectorResult<()> {
         if let Ok(danube_url) = env::var("DANUBE_SERVICE_URL") {
             self.core.danube_service_url = danube_url;
         }
@@ -84,7 +59,6 @@ impl MqttSourceConfig {
             self.core.connector_name = connector_name;
         }
 
-        // Override MQTT connection settings
         if let Ok(host) = env::var("MQTT_BROKER_HOST") {
             self.mqtt.broker_host = host;
         }
@@ -99,7 +73,6 @@ impl MqttSourceConfig {
             self.mqtt.client_id = client_id;
         }
 
-        // Override credentials (secrets should not be in config files)
         if let Ok(username) = env::var("MQTT_USERNAME") {
             self.mqtt.username = Some(username);
         }
@@ -113,27 +86,30 @@ impl MqttSourceConfig {
                 self.mqtt.use_tls = b;
             }
         }
-    }
 
-    /// Validate all configuration
-    pub fn validate(&self) -> ConnectorResult<()> {
-        // Validate MQTT-specific configuration
+        Ok(())
+    }
+}
+
+impl ConfigValidate for MqttSourceConfig {
+    fn validate_config(&self) -> ConnectorResult<()> {
         self.mqtt.validate()?;
-        
-        // Schema validation is handled by danube-connect-core
-        // We just validate that topics match between mappings and schemas
+
         for schema in &self.core.schemas {
-            let topic_exists = self.mqtt.topic_mappings.iter()
-                .any(|m| m.danube_topic == schema.topic);
-            
+            let topic_exists = self
+                .mqtt
+                .routes
+                .iter()
+                .any(|mapping| mapping.to == schema.topic);
+
             if !topic_exists {
                 tracing::warn!(
-                    "Schema configured for topic '{}' but no topic mapping exists for it",
+                    "Schema configured for topic '{}' but no route exists for it",
                     schema.topic
                 );
             }
         }
-        
+
         Ok(())
     }
 }
@@ -173,8 +149,8 @@ pub struct MqttConfig {
     #[serde(default = "default_max_packet_size")]
     pub max_packet_size: usize,
 
-    /// Topic mappings (MQTT topic -> Danube topic)
-    pub topic_mappings: Vec<TopicMapping>,
+    /// Routes (MQTT topic -> Danube topic)
+    pub routes: Vec<TopicMapping>,
 
     /// Clean session on connect
     #[serde(default = "default_true")]
@@ -225,21 +201,21 @@ impl MqttConfig {
             ));
         }
 
-        if self.topic_mappings.is_empty() {
+        if self.routes.is_empty() {
             return Err(danube_connect_core::ConnectorError::config(
-                "At least one topic mapping is required",
+                "At least one route is required",
             ));
         }
 
-        for mapping in &self.topic_mappings {
-            if mapping.mqtt_topic.is_empty() {
+        for mapping in &self.routes {
+            if mapping.from.is_empty() {
                 return Err(danube_connect_core::ConnectorError::config(
-                    "MQTT topic cannot be empty",
+                    "Route 'from' cannot be empty",
                 ));
             }
-            if mapping.danube_topic.is_empty() {
+            if mapping.to.is_empty() {
                 return Err(danube_connect_core::ConnectorError::config(
-                    "Danube topic cannot be empty",
+                    "Route 'to' cannot be empty",
                 ));
             }
         }
@@ -302,10 +278,10 @@ impl From<QoS> for rumqttc::QoS {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TopicMapping {
     /// MQTT topic pattern (supports wildcards: +, #)
-    pub mqtt_topic: String,
+    pub from: String,
 
     /// Target Danube topic
-    pub danube_topic: String,
+    pub to: String,
 
     /// QoS level for MQTT subscription
     #[serde(default = "default_qos")]
@@ -353,9 +329,9 @@ mod tests {
             keep_alive_secs: 60,
             connection_timeout_secs: 30,
             max_packet_size: 1024 * 1024,
-            topic_mappings: vec![TopicMapping {
-                mqtt_topic: "sensors/#".to_string(),
-                danube_topic: "/mqtt/sensors".to_string(),
+            routes: vec![TopicMapping {
+                from: "sensors/#".to_string(),
+                to: "/mqtt/sensors".to_string(),
                 qos: QoS::AtLeastOnce,
                 partitions: 0,
                 reliable_dispatch: None,
@@ -373,7 +349,7 @@ mod tests {
 
         // Test empty topic mappings
         config.broker_host = "localhost".to_string();
-        config.topic_mappings = vec![];
+        config.routes = vec![];
         assert!(config.validate().is_err());
     }
 }

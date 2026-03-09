@@ -25,17 +25,16 @@
 //! s3_endpoint = "http://localhost:9000"  # MinIO
 //! s3_allow_http = true
 //!
-//! [[deltalake.topic_mappings]]
-//! topic = "/events/payments"
+//! [[deltalake.routes]]
+//! from = "/events/payments"
 //! subscription = "deltalake-payments"
-//! delta_table_path = "s3://my-bucket/tables/payments"
-//! schema_type = "Json"
+//! to = "s3://my-bucket/tables/payments"
 //! include_danube_metadata = true
 //!
-//! # Compact inline schema format
-//! schema = [
-//!     { name = "payment_id", data_type = "Utf8", nullable = false },
-//!     { name = "amount", data_type = "Float64", nullable = false },
+//! # Field mappings from JSON payload to Delta Lake columns
+//! field_mappings = [
+//!     { json_path = "payment_id", column = "payment_id", data_type = "Utf8", nullable = false },
+//!     { json_path = "amount", column = "amount", data_type = "Float64", nullable = false },
 //! ]
 //! ```
 

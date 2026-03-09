@@ -40,7 +40,7 @@ docker run -d \
   danube/source-webhook:latest
 ```
 
-**Note:** All structural configuration (endpoints, topics, partitions, rate limits) must be in `connector.toml`. See [Configuration](#configuration) section below.
+**Note:** All structural configuration (routes, topics, partitions, rate limits) must be in `connector.toml`. See [Configuration](#configuration) section below.
 
 ### Complete Example
 
@@ -50,7 +50,7 @@ For a complete working setup with Docker Compose, test webhooks, and step-by-ste
 
 The example includes:
 - Docker Compose setup (Danube + ETCD + Webhook Connector)
-- Pre-configured connector.toml with 4 endpoints and 2 schemas
+- Pre-configured connector.toml with 4 routes and 2 schemas
 - Schema validation testing (JSON Schema + String schema)
 - Test webhook publisher script
 - Authentication and rate limiting examples
@@ -112,16 +112,16 @@ requests_per_second = 100
 burst_size = 200
 
 # Stripe payment webhooks
-[[endpoints]]
-path = "/webhooks/stripe/payments"
-danube_topic = "/stripe/payments"
+[[routes]]
+from = "/webhooks/stripe/payments"
+to = "/stripe/payments"
 partitions = 4
 reliable_dispatch = true
 
 # GitHub push events
-[[endpoints]]
-path = "/webhooks/github/push"
-danube_topic = "/github/push"
+[[routes]]
+from = "/webhooks/github/push"
+to = "/github/push"
 partitions = 2
 reliable_dispatch = false
 ```
@@ -346,7 +346,7 @@ Monitor these key metrics:
 
 **Solutions:**
 - Verify endpoint path matches configuration exactly (case-sensitive)
-- Check `[[endpoints]]` section in `connector.toml`
+- Check `[[routes]]` section in `connector.toml`
 - Ensure path starts with `/` in both config and request
 
 ### Webhooks Returning 429 Too Many Requests
@@ -397,9 +397,9 @@ schema_file = "schemas/payment.json"
 auto_register = true
 version_strategy = "latest"
 
-[[endpoints]]
-path = "/webhooks/stripe/payments"
-danube_topic = "/stripe/payments"
+[[routes]]
+from = "/webhooks/stripe/payments"
+to = "/stripe/payments"
 partitions = 4
 reliable_dispatch = true  # Critical payment events
 
@@ -413,9 +413,9 @@ algorithm = "sha256"
 ### GitHub Webhooks
 
 ```toml
-[[endpoints]]
-path = "/webhooks/github/push"
-danube_topic = "/github/push"
+[[routes]]
+from = "/webhooks/github/push"
+to = "/github/push"
 partitions = 2
 reliable_dispatch = false  # Non-critical notifications
 
@@ -429,9 +429,9 @@ algorithm = "sha256"
 ### Internal Microservices
 
 ```toml
-[[endpoints]]
-path = "/webhooks/orders"
-danube_topic = "/internal/orders"
+[[routes]]
+from = "/webhooks/orders"
+to = "/internal/orders"
 partitions = 8
 reliable_dispatch = true
 

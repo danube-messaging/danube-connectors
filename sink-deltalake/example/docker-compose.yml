@@ -1,55 +1,18 @@
 services:
-  # ETCD - Required for Danube broker metadata storage
-  etcd:
-    image: quay.io/coreos/etcd:v3.5.9
-    container_name: danube-etcd
-    environment:
-      - ETCDCTL_API=3
-      - ETCD_NAME=deltalake-etcd
-      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379
-      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
-      - ETCD_INITIAL_CLUSTER=deltalake-etcd=http://etcd:2380
-      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
-      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd:2380
-      - ETCD_INITIAL_CLUSTER_STATE=new
-      - ETCD_INITIAL_CLUSTER_TOKEN=deltalake-example-cluster
-    ports:
-      - "2379:2379"
-      - "2380:2380"
-    networks:
-      - deltalake-network
-    volumes:
-      - etcd_data:/etcd-data
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "etcdctl",
-          "--endpoints=http://127.0.0.1:2379",
-          "endpoint",
-          "health",
-        ]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
-
   # Danube Broker
   danube-broker:
     image: ghcr.io/danube-messaging/danube-broker:latest
     container_name: danube-broker
+    restart: on-failure
     ports:
       - "6650:6650" # Danube service port
       - "50051:50051" # Admin API
       - "9040:9040" # Prometheus metrics
     environment:
-      - RUST_LOG=danube_broker=info,danube_core=info
+      - RUST_LOG=danube_broker=info,danube_core=info,openraft=warn
     volumes:
-      - ./danube_broker.yml:/etc/danube_broker.yml:ro
-      - broker_wal:/data/wal
-    depends_on:
-      etcd:
-        condition: service_healthy
+      - ../../example_shared/danube_broker_no_auth.yml:/etc/danube_broker.yml:ro
+      - broker_data:/danube-data
     networks:
       - deltalake-network
     command:
@@ -60,39 +23,80 @@ services:
         "0.0.0.0:6650",
         "--admin-addr",
         "0.0.0.0:50051",
+        "--raft-addr",
+        "0.0.0.0:7650",
         "--prom-exporter",
         "0.0.0.0:9040",
         "--advertised-addr",
         "danube-broker:6650",
       ]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9040/metrics || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   # Topic Initialization - Creates schema and topic with validation
   topic-init:
-    image: ghcr.io/danube-messaging/danube-cli:latest
+    image: ghcr.io/danube-messaging/danube-admin:latest
     container_name: deltalake-topic-init
     depends_on:
       danube-broker:
-        condition: service_started
+        condition: service_healthy
     environment:
-      - DANUBE_SERVICE_URL=http://danube-broker:6650
       - DANUBE_ADMIN_ENDPOINT=http://danube-broker:50051
     volumes:
       # Mount schema definition file
       - ./events-schema.json:/schemas/events-schema.json:ro
     networks:
       - deltalake-network
-    command:
+    entrypoint:
       - sh
-      - -c
+      - -ec
       - |
         echo 'Waiting for Danube broker to be ready...'
         sleep 5
         
         echo 'Registering schema: events-schema-v1...'
-        danube-admin-cli schemas register events-schema-v1 --schema-type json_schema --file /schemas/events-schema.json || echo 'Schema may already exist'
+        danube-admin schemas register events-schema-v1 --schema-type json_schema --file /schemas/events-schema.json
+
+        echo 'Verifying schema registration...'
+        danube-admin schemas get --subject events-schema-v1
         
-        echo 'Creating topic /default/events with schema validation...'
-        danube-admin-cli topics create /default/events --dispatch-strategy reliable --schema-subject events-schema-v1 || echo 'Topic may already exist'
+        recreate_topic() {
+          if danube-admin topics delete /default/events; then
+            echo 'Deleted stale topic /default/events'
+          else
+            echo 'Topic delete skipped; continuing with recreation'
+          fi
+          if danube-admin topics create /default/events --dispatch-strategy reliable --schema-subject events-schema-v1; then
+            echo 'Recreated topic /default/events'
+          else
+            echo 'Topic create skipped; attempting schema configuration on existing topic'
+            danube-admin topics configure-schema /default/events --subject events-schema-v1
+          fi
+        }
+
+        echo 'Ensuring topic /default/events exists with schema validation...'
+        if topic_info="$$(danube-admin topics describe /default/events --output json 2>/dev/null)"; then
+          echo 'Topic /default/events already exists'
+          if printf '%s' "$$topic_info" | grep -q '"broker_id": ""'; then
+            echo 'Topic /default/events is unassigned; recreating it'
+            recreate_topic
+          elif printf '%s' "$$topic_info" | grep -q '"delivery": "NonReliable"'; then
+            echo 'Topic /default/events is non-reliable; recreating it'
+            recreate_topic
+          elif ! printf '%s' "$$topic_info" | grep -q '"schema_subject": "events-schema-v1"'; then
+            echo 'Configuring schema for existing topic /default/events'
+            danube-admin topics configure-schema /default/events --subject events-schema-v1
+          fi
+        else
+          danube-admin topics create /default/events --dispatch-strategy reliable --schema-subject events-schema-v1
+        fi
+
+        echo 'Verifying topic schema configuration...'
+        danube-admin topics describe /default/events
         
         echo 'Schema and topic initialization complete'
     restart: "no"
@@ -172,11 +176,37 @@ services:
       - deltalake-network
     restart: unless-stopped
 
+  test-producer:
+    build:
+      context: .
+      dockerfile: Dockerfile.tools
+    profiles:
+      - tools
+    depends_on:
+      topic-init:
+        condition: service_completed_successfully
+    working_dir: /workspace
+    entrypoint:
+      - python3
+      - test_producer.py
+    environment:
+      - DANUBE_URL=${DANUBE_URL:-http://danube-broker:6650}
+      - TOPIC=${TOPIC:-/default/events}
+      - COUNT=${COUNT:-10}
+      - INTERVAL=${INTERVAL:-500}
+      - SCHEMA_SUBJECT=${SCHEMA_SUBJECT:-events-schema-v1}
+      - PRODUCER_NAME=${PRODUCER_NAME:-test_producer}
+      - RAW_MESSAGE=${RAW_MESSAGE:-}
+    volumes:
+      - .:/workspace
+    networks:
+      - deltalake-network
+    restart: "no"
+
 networks:
   deltalake-network:
     driver: bridge
 
 volumes:
-  etcd_data:
-  broker_wal:
+  broker_data:
   minio_data:

@@ -296,14 +296,12 @@ mod tests {
         field_mapping2.init_path_parts();
 
         let mapping = TopicMapping {
-            topic: "/test".to_string(),
+            from: "/test".to_string(),
             subscription: "test-sub".to_string(),
-            delta_table_path: "test-path".to_string(),
+            to: "test-path".to_string(),
             expected_schema_subject: None,
             field_mappings: vec![field_mapping1, field_mapping2],
             write_mode: crate::config::WriteMode::Append,
-            batch_size: None,
-            flush_interval_ms: None,
             include_danube_metadata: false,
         };
 

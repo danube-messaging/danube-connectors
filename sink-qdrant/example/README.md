@@ -15,14 +15,15 @@ This example shows how to:
 ```
 ┌─────────────────┐
 │  Test Producer  │
-│  (danube-cli)   │
+│ (Docker Tools)  │
 └────────┬────────┘
          │ Embeddings
          ▼
-┌─────────────────┐     ┌──────────┐
-│ Danube Broker   │────▶│   ETCD   │
-│  Topic: vectors │     │ Metadata │
-└────────┬────────┘     └──────────┘
+┌─────────────────┐
+│ Danube Broker   │
+│  Topic: vectors │
+│  Embedded Raft  │
+└────────┬────────┘
          │ Stream
          ▼
 ┌─────────────────┐
@@ -42,7 +43,7 @@ This example shows how to:
 ### 1. Start the Stack
 
 ```bash
-# Start all services (ETCD, Danube, Topic Init, Qdrant, Connector)
+# Start all services (Danube, Topic Init, Qdrant, Connector)
 docker-compose up -d
 
 # Check logs
@@ -53,62 +54,33 @@ docker-compose ps
 ```
 
 **Startup Sequence:**
-1. **ETCD** starts and becomes healthy
-2. **Danube Broker** starts (depends on ETCD)
-3. **Topic Init** registers schema and creates `/default/vectors` topic with validation (depends on Danube)
-4. **Qdrant** starts independently and becomes healthy
-5. **Qdrant Sink** starts (depends on topic creation + Qdrant health)
+1. **Danube Broker** starts as a single-node broker using embedded Raft metadata
+2. **Topic Init** registers schema and creates `/default/vectors` topic with validation (depends on Danube)
+3. **Qdrant** starts independently and becomes healthy
+4. **Qdrant Sink** starts (depends on topic creation + Qdrant health)
+
+**Shared Danube broker config:**
+- The example mounts `../../example_shared/danube_broker_no_auth.yml`
+- Update that single file when Danube broker config changes for all connector examples
 
 Services:
-- **ETCD**: `http://localhost:2379` (Danube metadata storage)
 - **Danube Broker**: `http://localhost:6650`
 - **Danube Admin API**: `http://localhost:50051`
 - **Danube Metrics**: `http://localhost:9040/metrics`
 - **Qdrant HTTP**: `http://localhost:6333`
 - **Qdrant gRPC**: `http://localhost:6334`
 - **Connector Metrics**: `http://localhost:9090/metrics`
+- **Docker Tools Profile**: `embeddings-generator`, `test-producer`, `vector-search`
 
-### 2. Install Dependencies
+### 2. Use the Dockerized Helper Tools
 
-**Python** (for embedding generation and search):
+The example no longer requires local Python or `danube-cli` for the main workflow.
 
-```bash
-pip install -r requirements.txt
+On first use, Docker Compose builds a small Python tools image from `Dockerfile.tools` and reuses it for embedding generation, message production, and vector search.
 
-# Or with virtual environment
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-**danube-cli** (for sending messages to Danube):
-
-Download the latest release for your system from [Danube Releases](https://github.com/danube-messaging/danube/releases):
-
-```bash
-# Linux
-wget https://github.com/danube-messaging/danube/releases/download/v0.6.x/danube-cli-linux
-chmod +x danube-cli-linux
-
-# macOS (Apple Silicon)
-wget https://github.com/danube-messaging/danube/releases/download/v0.6.x/danube-cli-macos
-chmod +x danube-cli-macos
-
-# Windows
-# Download danube-cli-windows.exe from the releases page
-```
-
-**Note:** The `test_producer.sh` script automatically detects `danube-cli-linux`, `danube-cli-macos`, or `danube-cli` in the current directory, so you don't need to install it system-wide.
-
-**Available platforms:**
-- Linux: `danube-cli-linux`
-- macOS (Apple Silicon): `danube-cli-macos`
-- Windows: `danube-cli-windows.exe`
-
-Or use the Docker image:
-```bash
-docker pull ghcr.io/danube-messaging/danube-cli:v0.6.0
-```
+When overriding helper connection settings, use the Docker service names inside the Compose network:
+- Danube: `http://danube-broker:6650`
+- Qdrant: `http://qdrant:6333`
 
 ### 3. Generate and Send Test Data
 
@@ -116,13 +88,13 @@ docker pull ghcr.io/danube-messaging/danube-cli:v0.6.0
 
 ```bash
 # Generate 10 sample embeddings (384 dimensions)
-./generate_embeddings.py --count 10
+docker-compose --profile tools run --rm embeddings-generator --count 10
 
 # Use a different model (768 dimensions)
-./generate_embeddings.py --count 20 --model all-mpnet-base-v2
+docker-compose --profile tools run --rm embeddings-generator --count 20 --model all-mpnet-base-v2
 
 # Without sentence-transformers (random vectors)
-./generate_embeddings.py --count 10
+docker-compose --profile tools run --rm embeddings-generator --count 10
 ```
 
 This creates `embeddings.jsonl` with sample messages and their vector embeddings.
@@ -130,18 +102,18 @@ This creates `embeddings.jsonl` with sample messages and their vector embeddings
 **Step 2: Send to Danube**
 
 ```bash
-# Send embeddings using danube-cli
-./test_producer.sh
+# Send embeddings using the Dockerized Python producer
+docker-compose --profile tools run --rm test-producer
 
 # Custom configuration
-DANUBE_URL=http://localhost:6650 \
+DANUBE_URL=http://danube-broker:6650 \
 TOPIC=/default/vectors \
-./test_producer.sh
+docker-compose --profile tools run --rm test-producer
 ```
 
 The workflow:
-1. `generate_embeddings.py` creates embeddings using sentence-transformers
-2. `test_producer.sh` sends them to Danube using `danube-cli` with schema validation
+1. `docker-compose --profile tools run --rm embeddings-generator` runs the embedding generator inside Docker
+2. `docker-compose --profile tools run --rm test-producer` runs a single long-lived Danube Python producer inside Docker
 3. Messages are validated against the registered `embeddings-v1` schema
 4. Connector automatically streams validated data to Qdrant
 
@@ -150,23 +122,20 @@ The workflow:
 Perform semantic search:
 
 ```bash
-# Make script executable
-chmod +x search_vectors.py
-
 # Search for similar messages
-./search_vectors.py --query "password reset help"
+docker-compose --profile tools run --rm vector-search --query "password reset help"
 
 # Get more results
-./search_vectors.py --query "billing question" --limit 10
+docker-compose --profile tools run --rm vector-search --query "billing question" --limit 10
 
 # Show Danube metadata
-./search_vectors.py --query "technical issue" --show-metadata
+docker-compose --profile tools run --rm vector-search --query "technical issue" --show-metadata
 
 # List all collections
-./search_vectors.py --list
+docker-compose --profile tools run --rm vector-search --list
 
 # Show collection info
-./search_vectors.py --info
+docker-compose --profile tools run --rm vector-search --info
 ```
 
 ## Configuration
@@ -175,10 +144,10 @@ chmod +x search_vectors.py
 
 **Single Topic with Schema Validation:** `connector.toml`
 ```toml
-[[qdrant.topic_mappings]]
-topic = "/default/vectors"
+[[qdrant.routes]]
+from = "/default/vectors"
 subscription = "qdrant-sink-sub"
-collection_name = "vectors"
+to = "vectors"
 vector_dimension = 384
 distance = "Cosine"
 auto_create_collection = true
@@ -191,21 +160,23 @@ expected_schema_subject = "embeddings-v1"
 **Multi-Topic:** `connector-multi-topic.toml`
 ```toml
 # Route different topics to different collections
-[[qdrant.topic_mappings]]
-topic = "/default/chat_embeddings"
-collection_name = "chat_vectors"
+[[qdrant.routes]]
+from = "/default/chat_embeddings"
+subscription = "qdrant-chat-sub"
+to = "chat_vectors"
 vector_dimension = 384
 
-[[qdrant.topic_mappings]]
-topic = "/default/wiki_embeddings"
-collection_name = "wiki_knowledge"
+[[qdrant.routes]]
+from = "/default/wiki_embeddings"
+subscription = "qdrant-wiki-sub"
+to = "wiki_knowledge"
 vector_dimension = 768
 
-[[qdrant.topic_mappings]]
-topic = "/default/code_embeddings"
-collection_name = "code_search"
+[[qdrant.routes]]
+from = "/default/code_embeddings"
+subscription = "qdrant-code-sub"
+to = "code_search"
 vector_dimension = 1536
-batch_size = 200  # Per-topic override
 ```
 
 To use:
@@ -224,9 +195,9 @@ Update `docker-compose.yml`:
 ```yaml
 qdrant-sink:
   environment:
-    - CONFIG_FILE=/app/config.toml
+    - CONNECTOR_CONFIG_PATH=/etc/connector.toml
   volumes:
-    - ./connector.toml:/app/config.toml:ro  # or connector-multi-topic.toml
+    - ./connector.toml:/etc/connector.toml:ro  # or connector-multi-topic.toml
 ```
 
 ## Monitoring
@@ -270,7 +241,7 @@ docker-compose logs -f qdrant
 
 ```bash
 # View collection info
-./search_vectors.py --info
+docker-compose --profile tools run --rm vector-search --info
 ```
 
 ### Test with Different Vector Dimensions
@@ -281,16 +252,16 @@ The example uses 384-dimensional vectors (sentence-transformers). To test other 
 # Stop services
 docker-compose down
 
-# Edit docker-compose.yml
-# Change: QDRANT_VECTOR_DIMENSION=384
-# To:     QDRANT_VECTOR_DIMENSION=1536  # for OpenAI
+# Edit connector.toml
+# Change: vector_dimension = 384
+# To:     vector_dimension = 1536  # for OpenAI
 
 # Restart
 docker-compose up -d
 
 # Generate and send data with matching dimension
-./generate_embeddings.py --model all-mpnet-base-v2 --count 10
-./test_producer.sh
+docker-compose --profile tools run --rm embeddings-generator --model all-mpnet-base-v2 --count 10
+docker-compose --profile tools run --rm test-producer
 ```
 
 ## Troubleshooting
@@ -311,18 +282,18 @@ docker-compose logs qdrant-sink
 
 ```bash
 # Verify data was sent
-./search_vectors.py --info
+docker-compose --profile tools run --rm vector-search --info
 
 # Check if Points Count > 0
 # If zero, resend data:
-./generate_embeddings.py --count 10
-./test_producer.sh
+docker-compose --profile tools run --rm embeddings-generator --count 10
+docker-compose --profile tools run --rm test-producer
 
-# Wait a few seconds for batch flush
+# Wait a few seconds for runtime processing
 sleep 3
 
 # Try search again
-./search_vectors.py --query "test"
+docker-compose --profile tools run --rm vector-search --query "test"
 ```
 
 ### Vector Dimension Mismatch
@@ -330,7 +301,7 @@ sleep 3
 **Error:** `Vector dimension mismatch: expected 384, got 1536`
 
 **Solution:** 
-1. Update `QDRANT_VECTOR_DIMENSION` in docker-compose.yml
+1. Update `vector_dimension` in `connector.toml`
 2. Restart connector: `docker-compose restart qdrant-sink`
 3. Or recreate collection with correct dimension
 
@@ -338,7 +309,7 @@ sleep 3
 
 ```bash
 # List collections
-./search_vectors.py --list
+docker-compose --profile tools run --rm vector-search --list
 
 # If collection doesn't exist, check:
 # 1. auto_create_collection is enabled
@@ -348,22 +319,22 @@ docker-compose logs qdrant-sink | grep "collection"
 
 ## Performance Tips
 
-### Optimize Batch Size
+### Tune Runtime Processing
 
 For high throughput:
 
-```yaml
-environment:
-  - QDRANT_BATCH_SIZE=200        # Larger batches
-  - QDRANT_BATCH_TIMEOUT_MS=5000 # Less frequent flushes
+```toml
+[processing]
+batch_size = 200
+batch_timeout_ms = 5000
 ```
 
 For low latency:
 
-```yaml
-environment:
-  - QDRANT_BATCH_SIZE=10         # Smaller batches
-  - QDRANT_BATCH_TIMEOUT_MS=100  # Frequent flushes
+```toml
+[processing]
+batch_size = 10
+batch_timeout_ms = 100
 ```
 
 ## Cleanup
@@ -381,7 +352,7 @@ docker-compose down -v --rmi all
 
 ## Next Steps
 
-1. **Production Deployment**: See main [README](../../connectors/sink-qdrant/README.md) for production setup
+1. **Production Deployment**: See main [README](../README.md) for production setup
 2. **Custom Embeddings**: Integrate your own embedding pipeline
 3. **Multi-Topic Routing**: Use `connector-multi-topic.toml` to route multiple topics to different collections
 4. **Qdrant Cloud**: Use managed Qdrant with `QDRANT_API_KEY`
@@ -392,11 +363,11 @@ docker-compose down -v --rmi all
 - [Qdrant Documentation](https://qdrant.tech/documentation/)
 - [Sentence Transformers](https://www.sbert.net/)
 - [RAG Tutorial](https://qdrant.tech/articles/what-is-rag-in-ai/)
-- [Connector Development Guide](../../info/connector-development-guide.md)
+- [Configuration Guide](../config/README.md)
 
 ## Support
 
 For issues or questions:
-- Check [connector logs](../../connectors/sink-qdrant/README.md#troubleshooting)
-- Review [development guide](../../info/connector-development-guide.md)
+- Check [connector logs](../README.md#troubleshooting)
+- Review [configuration guide](../config/README.md)
 - Open an issue on GitHub

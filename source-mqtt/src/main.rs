@@ -38,17 +38,21 @@ async fn main() -> ConnectorResult<()> {
     tracing::info!("Configuration loaded and validated successfully");
     tracing::info!("Connector: {}", config.core.connector_name);
     tracing::info!("Danube URL: {}", config.core.danube_service_url);
-    tracing::info!("MQTT Broker: {}:{}", config.mqtt.broker_host, config.mqtt.broker_port);
+    tracing::info!(
+        "MQTT Broker: {}:{}",
+        config.mqtt.broker_host,
+        config.mqtt.broker_port
+    );
     tracing::info!("MQTT Client ID: {}", config.mqtt.client_id);
-    tracing::info!("Topic Mappings: {} configured", config.mqtt.topic_mappings.len());
-    
+    tracing::info!("Routes: {} configured", config.mqtt.routes.len());
+
     // Log each topic mapping with details
-    for (idx, mapping) in config.mqtt.topic_mappings.iter().enumerate() {
+    for (idx, mapping) in config.mqtt.routes.iter().enumerate() {
         tracing::info!(
             "  [{}] {} → {} (QoS: {:?}, Partitions: {}, Reliable: {})",
             idx + 1,
-            mapping.mqtt_topic,
-            mapping.danube_topic,
+            mapping.from,
+            mapping.to,
             mapping.qos,
             mapping.partitions,
             mapping.effective_reliable_dispatch()

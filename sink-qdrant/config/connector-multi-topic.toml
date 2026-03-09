@@ -37,10 +37,6 @@ log_level = "info"
 [qdrant]
 url = "http://localhost:6334"
 # api_key = "your-qdrant-cloud-api-key"
-
-# Global defaults (can be overridden per topic)
-batch_size = 50
-batch_timeout_ms = 1000
 timeout_secs = 30
 
 # ============================================================================
@@ -50,11 +46,11 @@ timeout_secs = 30
 # Model: sentence-transformers/all-MiniLM-L6-v2 (384 dimensions)
 # Strategy: Small batches for low latency
 
-[[qdrant.topic_mappings]]
-topic = "/default/chat_embeddings"
+[[qdrant.routes]]
+from = "/default/chat_embeddings"
 subscription = "qdrant-chat-sub"
 subscription_type = "Exclusive"
-collection_name = "chat_vectors"
+to = "chat_vectors"
 vector_dimension = 384
 distance = "Cosine"
 auto_create_collection = true
@@ -64,10 +60,6 @@ include_danube_metadata = true
 # Schema must be registered in Danube Schema Registry before producing
 expected_schema_subject = "chat-embeddings-v1"
 
-# Small batches for real-time updates
-batch_size = 25
-batch_timeout_ms = 500
-
 # ============================================================================
 # TOPIC MAPPING 2: Wiki Knowledge Base
 # ============================================================================
@@ -75,11 +67,11 @@ batch_timeout_ms = 500
 # Model: sentence-transformers/all-mpnet-base-v2 (768 dimensions)
 # Strategy: Balanced batching
 
-[[qdrant.topic_mappings]]
-topic = "/default/wiki_embeddings"
+[[qdrant.routes]]
+from = "/default/wiki_embeddings"
 subscription = "qdrant-wiki-sub"
 subscription_type = "Exclusive"
-collection_name = "wiki_knowledge"
+to = "wiki_knowledge"
 vector_dimension = 768
 distance = "Cosine"
 auto_create_collection = true
@@ -88,8 +80,6 @@ include_danube_metadata = true
 # Schema validation
 expected_schema_subject = "wiki-embeddings-v1"
 
-# Use global batch settings (50 points, 1000ms)
-
 # ============================================================================
 # TOPIC MAPPING 3: Code Search
 # ============================================================================
@@ -97,11 +87,11 @@ expected_schema_subject = "wiki-embeddings-v1"
 # Model: OpenAI text-embedding-ada-002 (1536 dimensions)
 # Strategy: Large batches for throughput
 
-[[qdrant.topic_mappings]]
-topic = "/default/code_embeddings"
+[[qdrant.routes]]
+from = "/default/code_embeddings"
 subscription = "qdrant-code-sub"
 subscription_type = "Exclusive"
-collection_name = "code_search"
+to = "code_search"
 vector_dimension = 1536
 distance = "Cosine"
 auto_create_collection = true
@@ -112,10 +102,6 @@ include_danube_metadata = false
 # Schema validation
 expected_schema_subject = "code-embeddings-v1"
 
-# Large batches for maximum throughput
-batch_size = 200
-batch_timeout_ms = 2000
-
 # ============================================================================
 # TOPIC MAPPING 4: Visual Search (Images)
 # ============================================================================
@@ -123,11 +109,11 @@ batch_timeout_ms = 2000
 # Model: CLIP or similar visual embedding model (512 dimensions)
 # Strategy: Different distance metric for visual data
 
-[[qdrant.topic_mappings]]
-topic = "/media/image_embeddings"
+[[qdrant.routes]]
+from = "/media/image_embeddings"
 subscription = "qdrant-image-sub"
 subscription_type = "Exclusive"
-collection_name = "visual_search"
+to = "visual_search"
 vector_dimension = 512
 
 # Euclidean distance often works better for visual embeddings
@@ -138,9 +124,6 @@ include_danube_metadata = true
 # Schema validation
 expected_schema_subject = "image-embeddings-v1"
 
-batch_size = 100
-batch_timeout_ms = 1500
-
 # ============================================================================
 # TOPIC MAPPING 5: Multi-lingual Content
 # ============================================================================
@@ -148,13 +131,13 @@ batch_timeout_ms = 1500
 # Model: Cohere embed-multilingual-v3.0 (1024 dimensions)
 # Strategy: Shared subscription for load balancing
 
-[[qdrant.topic_mappings]]
-topic = "/multilang/embeddings"
+[[qdrant.routes]]
+from = "/multilang/embeddings"
 subscription = "qdrant-multilang-sub"
 
 # Shared subscription allows multiple connector instances to share the load
 subscription_type = "Shared"
-collection_name = "multilingual_content"
+to = "multilingual_content"
 vector_dimension = 1024
 distance = "Cosine"
 auto_create_collection = true

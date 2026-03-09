@@ -25,17 +25,13 @@ url = "http://localhost:6334"
 
 # Optional API key for Qdrant Cloud
 # api_key = "your-api-key-here"
-
-# Global batch settings (can be overridden per topic)
-batch_size = 50
-batch_timeout_ms = 1000
 timeout_secs = 30
 
 # Topic Mapping: Danube topic → Qdrant collection
 # You can define multiple mappings to route different topics to different collections
-[[qdrant.topic_mappings]]
+[[qdrant.routes]]
 # Danube topic to consume from
-topic = "/default/vectors"
+from = "/default/vectors"
 
 # Subscription name (for consumer group)
 subscription = "qdrant-sink-sub"
@@ -44,7 +40,7 @@ subscription = "qdrant-sink-sub"
 subscription_type = "Exclusive"
 
 # Target Qdrant collection name
-collection_name = "vectors"
+to = "vectors"
 
 # Vector dimension - REQUIRED for two reasons:
 # 1. Early Validation: Connector validates dimensions BEFORE sending to Qdrant
@@ -73,7 +69,3 @@ include_danube_metadata = true
 # If set, the runtime validates and deserializes messages automatically
 # Schema must be registered in Danube Schema Registry before starting
 expected_schema_subject = "embeddings-v1"
-
-# Optional: Override global batch settings for this specific topic
-# batch_size = 100
-# batch_timeout_ms = 500

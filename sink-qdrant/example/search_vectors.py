@@ -9,6 +9,7 @@ Install dependencies:
 """
 
 import argparse
+import os
 from typing import List, Dict, Any
 
 try:
@@ -128,7 +129,7 @@ def main():
     parser = argparse.ArgumentParser(description="Search vectors in Qdrant")
     parser.add_argument(
         "--url",
-        default="http://localhost:6333",
+        default=os.environ.get("QDRANT_URL", "http://localhost:6333"),
         help="Qdrant HTTP URL"
     )
     parser.add_argument(

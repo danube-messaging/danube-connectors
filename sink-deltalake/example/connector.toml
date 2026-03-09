@@ -19,20 +19,16 @@ s3_allow_http = true  # Required for MinIO
 # AWS_ACCESS_KEY_ID
 # AWS_SECRET_ACCESS_KEY
 
-# Global batch settings (can be overridden per topic)
-batch_size = 100  # High batch size - rely on flush interval
-flush_interval_ms = 3000  # Flush every 3 seconds if batch not full
-
 # Topic Mapping: Danube topic → Delta Lake table
-[[deltalake.topic_mappings]]
+[[deltalake.routes]]
 # Danube topic to consume from
-topic = "/default/events"
+from = "/default/events"
 
 # Subscription name (for consumer group)
 subscription = "deltalake-sink-sub"
 
 # Delta table path (S3 URI format)
-delta_table_path = "s3://delta-tables/events"
+to = "s3://delta-tables/events"
 
 # Write mode: "append" (default) or "overwrite"
 write_mode = "append"
@@ -55,7 +51,3 @@ field_mappings = [
     { json_path = "amount", column = "amount", data_type = "Int64", nullable = true },
     { json_path = "currency", column = "currency", data_type = "Utf8", nullable = true },
 ]
-
-# Optional: Override global batch settings for this specific topic
-# batch_size = 50
-# flush_interval_ms = 500

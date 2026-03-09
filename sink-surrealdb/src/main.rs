@@ -40,22 +40,16 @@ async fn main() -> ConnectorResult<()> {
     tracing::info!("Connector: {}", config.core.connector_name);
     tracing::info!("Danube URL: {}", config.core.danube_service_url);
     tracing::info!("SurrealDB URL: {}", config.surrealdb.url);
-    tracing::info!(
-        "SurrealDB Namespace: {}",
-        config.surrealdb.namespace
-    );
+    tracing::info!("SurrealDB Namespace: {}", config.surrealdb.namespace);
     tracing::info!("SurrealDB Database: {}", config.surrealdb.database);
-    tracing::info!(
-        "Topic Mappings: {} configured",
-        config.surrealdb.topic_mappings.len()
-    );
+    tracing::info!("Routes: {} configured", config.surrealdb.routes.len());
 
-    for (idx, mapping) in config.surrealdb.topic_mappings.iter().enumerate() {
+    for (idx, mapping) in config.surrealdb.routes.iter().enumerate() {
         tracing::info!(
-            "  Mapping {}: Topic '{}' → Table '{}'",
+            "  Route {}: Topic '{}' → Table '{}'",
             idx + 1,
-            mapping.topic,
-            mapping.table_name
+            mapping.from,
+            mapping.to
         );
     }
 
@@ -65,7 +59,7 @@ async fn main() -> ConnectorResult<()> {
     // Create and run the sink runtime
     tracing::info!("Initializing connector runtime...");
     let mut runtime = SinkRuntime::new(connector, config.core).await?;
-    
+
     // Run until shutdown signal
     runtime.run().await?;
 
