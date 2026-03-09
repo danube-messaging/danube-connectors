@@ -64,8 +64,12 @@ services:
         echo 'Verifying schema registration...'
         danube-admin schemas get --subject embeddings-v1
 
-        echo 'Creating topic /default/vectors with schema validation...'
-        danube-admin topics create /default/vectors --dispatch-strategy reliable --schema-subject embeddings-v1
+        echo 'Ensuring topic /default/vectors exists with schema validation...'
+        if danube-admin topics describe /default/vectors >/dev/null 2>&1; then
+          echo 'Topic /default/vectors already exists'
+        else
+          danube-admin topics create /default/vectors --dispatch-strategy reliable --schema-subject embeddings-v1
+        fi
 
         echo 'Verifying topic schema configuration...'
         danube-admin topics describe /default/vectors
@@ -133,6 +137,74 @@ services:
       - qdrant-network
     restart: unless-stopped
 
+  embeddings-generator:
+    build:
+      context: .
+      dockerfile: Dockerfile.tools
+    profiles:
+      - tools
+    working_dir: /workspace
+    entrypoint:
+      - python3
+      - generate_embeddings.py
+    environment:
+      - HF_HOME=/models/huggingface
+    volumes:
+      - .:/workspace
+      - hf_cache:/models/huggingface
+    networks:
+      - qdrant-network
+    restart: "no"
+
+  test-producer:
+    build:
+      context: .
+      dockerfile: Dockerfile.tools
+    profiles:
+      - tools
+    depends_on:
+      topic-init:
+        condition: service_completed_successfully
+    working_dir: /workspace
+    entrypoint:
+      - python3
+      - test_producer.py
+    environment:
+      - DANUBE_URL=${DANUBE_URL:-http://danube-broker:6650}
+      - TOPIC=${TOPIC:-/default/vectors}
+      - EMBEDDINGS_FILE=${EMBEDDINGS_FILE:-embeddings.jsonl}
+      - INTERVAL=${INTERVAL:-500}
+      - SCHEMA_SUBJECT=${SCHEMA_SUBJECT:-embeddings-v1}
+      - PRODUCER_NAME=${PRODUCER_NAME:-test_producer}
+    volumes:
+      - .:/workspace
+    networks:
+      - qdrant-network
+    restart: "no"
+
+  vector-search:
+    build:
+      context: .
+      dockerfile: Dockerfile.tools
+    profiles:
+      - tools
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    working_dir: /workspace
+    entrypoint:
+      - python3
+      - search_vectors.py
+    environment:
+      - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
+      - HF_HOME=/models/huggingface
+    volumes:
+      - .:/workspace
+      - hf_cache:/models/huggingface
+    networks:
+      - qdrant-network
+    restart: "no"
+
 networks:
   qdrant-network:
     driver: bridge
@@ -140,3 +212,4 @@ networks:
 volumes:
   broker_data:
   qdrant_storage:
+  hf_cache:
